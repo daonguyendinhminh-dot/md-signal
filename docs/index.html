@@ -226,12 +226,25 @@ function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt
 const cfg = k => (DATA && DATA.config && DATA.config[k]) ?? {breakout_len:55, exit_len:20, ma_len:200, stop_atr:3, be_atr:2}[k];
 
 /* ───────── Màn hình chính ───────── */
+let STRAT = store.get('strat', 'bo');
+const SWN = () => cfg('sw_ma') || 20;
+function V(r, st){
+  st = st || STRAT;
+  if (!r || r.error || st !== 'sw' || !r.swing) return r;
+  return {...r, ...r.swing, kind: 'sw'};
+}
+const stratBar = (id, cur) => `<div class="seg" id="${id}" style="margin:16px 0 0">
+  <button data-st="bo" class="${cur==='bo'?'on':''}">🚀 Phá đỉnh <small style="opacity:.7">· giữ ~2 tháng</small></button>
+  <button data-st="sw" class="${cur==='sw'?'on':''}">🌊 Lướt sóng <small style="opacity:.7">· ~3 tuần</small></button></div>`;
+
 function render(){
-  const rs = DATA.results || [];
+  const all = DATA.results || [];
+  const rs = all.map(r => V(r));
   const ok = rs.filter(r => !r.error);
+  const sw = STRAT === 'sw';
   const hold = ok.filter(r => r.status === 'hold' || r.status === 'sell');
   const fresh = ok.filter(r => r.event);
-  const near = ok.filter(r => r.status === 'wait' && r.uptrend && r.to_buy !== null && r.to_buy <= 3);
+  const near = ok.filter(r => r.status === 'wait' && r.uptrend && r.to_buy !== null && r.to_buy > 0 && r.to_buy <= 3);
   const u = DATA.updated ? new Date(DATA.updated) : null;
   $('#upd').textContent = u ? 'Cập nhật ' + u.toLocaleString('vi-VN', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'}) : '';
   $('#tiles').innerHTML = `
@@ -240,7 +253,7 @@ function render(){
     <div class="tile"><b>${fresh.length}</b><small>tín hiệu phiên ${ok[0] ? vd(ok[0].date, true) : ''}</small></div>`;
 
   const bad = rs.filter(r => r.error);
-  let nt = '';
+  let nt = stratBar('stSig', STRAT);
   if (DATA.telegram && DATA.telegram !== 'ok') nt += `<div class="notice">📨 Telegram: <b>${esc(DATA.telegram)}</b></div>`;
   if (bad.length) nt += `<div class="notice">⚠️ Chưa lấy được dữ liệu: <b>${bad.map(r => esc(r.sym)).join(', ')}</b></div>`;
   $('#notices').innerHTML = nt;
@@ -252,13 +265,17 @@ function render(){
   const holdSorted = [...hold].sort((a,b) => b.pos.pnl - a.pos.pnl);
   h += `<h2>Đang giữ <span>${holdSorted.length} mã</span></h2><div class="list">` +
        (holdSorted.length ? holdSorted.map(holdRow).join('') : `<div class="row off"><div class="b" style="margin:0">Chưa giữ mã nào. Chờ tín hiệu MUA.</div></div>`) + `</div>`;
-  const wait = ok.filter(r => r.status !== 'hold' && r.status !== 'sell')
-    .sort((a,b) => (b.uptrend - a.uptrend) || ((a.to_buy ?? 99) - (b.to_buy ?? 99)));
+  const rank = r => !r.uptrend ? 999 : r.status === 'buy' ? -99 : (r.to_buy === null ? 99 : r.to_buy > 0 ? r.to_buy : 50 - r.to_buy);
+  const wait = ok.filter(r => r.status !== 'hold' && r.status !== 'sell').sort((a,b) => rank(a) - rank(b));
   h += `<h2>Chờ mua <span>gần điểm mua xếp trước</span></h2><div class="list">` + wait.map(waitRow).join('') + bad.map(r =>
        `<button class="row off" data-s="${esc(r.sym)}"><div class="a"><span class="sym">${esc(r.sym)}</span><span class="px">Lỗi dữ liệu</span></div></button>`).join('') + `</div>`;
   $('#content').innerHTML = h;
 
-  $('#rules').innerHTML = `
+  $('#rules').innerHTML = sw ? `
+    <li><b class="up">MUA</b> khi giá đóng cửa <b>cắt lên đường MA${SWN()}</b>, <b>khối lượng lớn hơn ${cfg('sw_vol') || 1.5} lần</b> trung bình 20 phiên, và giá đang trên <b>MA${cfg('ma_len')}</b>.</li>
+    <li><b class="dn">BÁN</b> khi giá đóng cửa <b>dưới MA${SWN()}</b>.</li>
+    <li><b class="dn">CẮT LỖ</b> nếu giá rơi xuống giá mua trừ ${cfg('sw_stop_atr') || 3} lần ATR.</li>
+    <li>Giữ trung bình khoảng 15 phiên. Tín hiệu có sau giờ đóng cửa, <b>đặt lệnh vào đầu phiên hôm sau</b>.</li>` : `
     <li><b class="up">MUA</b> khi giá đóng cửa <b>vượt đỉnh cao nhất ${cfg('breakout_len')} phiên</b> và đang nằm trên <b>MA${cfg('ma_len')}</b> (xu hướng lớn đang tăng).</li>
     <li><b class="dn">BÁN</b> khi giá đóng cửa <b>thủng đáy thấp nhất ${cfg('exit_len')} phiên</b>.</li>
     <li><b class="dn">CẮT LỖ</b> nếu giá rơi xuống điểm cắt lỗ (giá mua trừ ${cfg('stop_atr')} lần biên độ dao động ATR).</li>
@@ -267,10 +284,11 @@ function render(){
 }
 
 function sigCard(r){
-  const cr = r.crypto, e = r.event;
+  const cr = r.crypto, e = r.event, sw = r.kind === 'sw';
   const map = {
-    '1': ['buy','MUA', `Vượt đỉnh ${cfg('breakout_len')} phiên. Mua đầu phiên tới, cắt lỗ nếu chạm <b class="num">${fp(r.stop,cr)}</b>.`],
-    '-1': ['sell','BÁN', `Thủng đáy ${cfg('exit_len')} phiên. Bán đầu phiên tới${r.pos ? ` (đang ${pct(r.pos.pnl)})` : ''}.`],
+    '1': ['buy','MUA', sw ? `Giá cắt lên MA${SWN()} kèm khối lượng lớn. Mua đầu phiên tới, cắt lỗ nếu chạm <b class="num">${fp(r.stop,cr)}</b>.`
+                         : `Vượt đỉnh ${cfg('breakout_len')} phiên. Mua đầu phiên tới, cắt lỗ nếu chạm <b class="num">${fp(r.stop,cr)}</b>.`],
+    '-1': ['sell','BÁN', `${sw ? 'Đóng cửa dưới MA' + SWN() : 'Thủng đáy ' + cfg('exit_len') + ' phiên'}. Bán đầu phiên tới${r.pos ? ` (đang ${pct(r.pos.pnl)})` : ''}.`],
     '-2': ['stop','CẮT LỖ', (() => { const t = (r.trades||[]).slice(-1)[0]; return t ? `Giá chạm điểm cắt lỗ. Lệnh mua ${vd(t.in_d,true)} kết thúc ${pct(t.ret)}.` : 'Giá chạm điểm cắt lỗ.'; })()],
     '3': ['be','DỜI STOP', `Đã lời đủ: dời điểm cắt lỗ lên giá mua <b class="num">${fp(r.stop,cr)}</b>. Lệnh này không còn lỗ.`],
   }[String(e)];
@@ -284,19 +302,21 @@ function holdRow(r){
   const tag = r.status === 'sell' ? '<span class="tag sell">BÁN phiên tới</span>' : '';
   return `<button class="row" data-s="${esc(r.sym)}">
     <div class="a"><span class="sym">${esc(r.sym)}</span><span class="px num">${fp(r.close, cr)}${finChip(r.sym)}${newsChip(r.sym)}</span>${tag}<span class="pill num ${p.pnl>=0?'up':'dn'}">${pct(p.pnl)}</span></div>
-    <div class="b">Mua ${vd(p.in_d,true)} giá <span class="num">${fp(p.in,cr)}</span> · ${r.be ? '🛡 hòa vốn' : 'cắt lỗ'} <span class="num">${fp(r.stop,cr)}</span> · bán nếu dưới <span class="num">${fp(r.sell_level,cr)}</span></div>
+    <div class="b">Mua ${vd(p.in_d,true)} giá <span class="num">${fp(p.in,cr)}</span> · ${r.be ? '🛡 hòa vốn' : 'cắt lỗ'} <span class="num">${fp(r.stop,cr)}</span> · bán nếu dưới ${r.kind === 'sw' ? 'MA' + SWN() + ' ' : ''}<span class="num">${fp(r.sell_level,cr)}</span></div>
   </button>`;
 }
 
 function waitRow(r){
-  const cr = r.crypto;
+  const cr = r.crypto, sw = r.kind === 'sw';
   if (r.status === 'buy') return `<button class="row" data-s="${esc(r.sym)}"><div class="a"><span class="sym">${esc(r.sym)}</span><span class="px num">${fp(r.close,cr)}</span><span class="tag buy">MUA phiên tới</span></div><div class="b">Cắt lỗ nếu chạm <span class="num">${fp(r.stop,cr)}</span></div></button>`;
   if (!r.uptrend) return `<button class="row off" data-s="${esc(r.sym)}"><div class="a"><span class="sym">${esc(r.sym)}</span><span class="px num">${fp(r.close,cr)}</span><span class="muted" style="font-size:12.5px">Xu hướng giảm</span></div><div class="b">Giá dưới MA${cfg('ma_len')} (<span class="num">${fp(r.ma,cr)}</span>), chưa xét mua</div></button>`;
+  if (sw && r.to_buy !== null && r.to_buy <= 0) return `<button class="row" data-s="${esc(r.sym)}"><div class="a"><span class="sym">${esc(r.sym)}</span><span class="px num">${fp(r.close,cr)}${finChip(r.sym)}${newsChip(r.sym)}</span><span class="muted" style="font-size:12.5px">Đang trên MA${SWN()}</span></div>
+    <div class="b">Đã lỡ nhịp. Chờ giá về dưới MA${SWN()} (<span class="num">${fp(r.buy_level,cr)}</span>) rồi cắt lên lại kèm khối lượng lớn</div></button>`;
   const fill = Math.max(4, Math.min(100, 100 - (r.to_buy ?? 20) * 6));
   return `<button class="row" data-s="${esc(r.sym)}">
     <div class="a"><span class="sym">${esc(r.sym)}</span><span class="px num">${fp(r.close,cr)}${finChip(r.sym)}${newsChip(r.sym)}</span><span class="num ${r.to_buy<=3?'gold':'muted'}" style="font-weight:600">còn ${r.to_buy.toFixed(1)}%</span></div>
     <div class="bar"><i style="width:${fill}%;background:${r.to_buy<=3?'var(--gold)':'var(--up)'}"></i></div>
-    <div class="b">Mua khi đóng cửa trên <span class="num">${fp(r.buy_level,cr)}</span></div>
+    <div class="b">${sw ? `Mua khi đóng cửa trên MA${SWN()} <span class="num">${fp(r.buy_level,cr)}</span>${r.vol_need ? ` và khối lượng trên <span class="num">${Math.round(r.vol_need).toLocaleString('en-US')}</span>${cr ? '' : ' cp'}` : ''}` : `Mua khi đóng cửa trên <span class="num">${fp(r.buy_level,cr)}</span>`}</div>
   </button>`;
 }
 
@@ -311,20 +331,26 @@ function statusBox(r){
     return `<div class="status ${r.status}"><div class="k ${r.status==='sell'?'dn':'up'}">${k}</div>
       <div class="v ${p.pnl>=0?'up':'dn'}">${p.pnl>=0?'Đang lời':'Đang lỗ'} ${pct(p.pnl)}</div>
       <ul><li>Mua ngày ${vd(p.in_d)} giá <b class="num">${fp(p.in,cr)}</b> (${p.days} phiên)${aiChip(p.ai, '🤖 AI')}</li>
-      <li>Bán khi giá đóng cửa dưới <b class="num">${fp(r.sell_level,cr)}</b> (đáy ${cfg('exit_len')} phiên)</li>
+      <li>Bán khi giá đóng cửa dưới <b class="num">${fp(r.sell_level,cr)}</b> (${r.kind === 'sw' ? 'MA' + SWN() : 'đáy ' + cfg('exit_len') + ' phiên'})</li>
       <li>${r.be ? '🛡 Đã dời điểm cắt lỗ lên giá mua' : 'Cắt lỗ nếu giá chạm'}: <b class="num">${fp(r.stop,cr)}</b></li></ul></div>`;
   }
   if (r.status === 'buy') return `<div class="status buy"><div class="k up">TÍN HIỆU MUA</div><div class="v">Mua đầu phiên tới${aiChip(r.ai, '🤖 AI')}</div>
-      <ul><li>Giá đóng cửa ${fp(r.close,cr)} đã vượt đỉnh ${cfg('breakout_len')} phiên</li><li>Cắt lỗ nếu giá chạm <b class="num">${fp(r.stop,cr)}</b></li></ul></div>`;
+      <ul><li>Giá đóng cửa ${fp(r.close,cr)} ${r.kind === 'sw' ? 'đã cắt lên MA' + SWN() + ' kèm khối lượng lớn' : 'đã vượt đỉnh ' + cfg('breakout_len') + ' phiên'}</li><li>Cắt lỗ nếu giá chạm <b class="num">${fp(r.stop,cr)}</b></li></ul></div>`;
   if (!r.uptrend) return `<div class="status"><div class="k muted">ĐỨNG NGOÀI</div><div class="v">Xu hướng giảm</div>
       <ul><li>Giá đang dưới MA${cfg('ma_len')} (<span class="num">${fp(r.ma,cr)}</span>), chưa xét mua</li>
       <li>Điểm mua hiện tại <b class="num">${fp(r.buy_level,cr)}</b> (cách ${pct(r.to_buy)})</li></ul></div>`;
+  if (r.kind === 'sw'){
+    if (r.to_buy !== null && r.to_buy <= 0) return `<div class="status"><div class="k gold">CHỜ NHỊP MỚI</div><div class="v">Giá đang trên MA${SWN()}</div>
+      <ul><li>Đã lỡ nhịp mua. Chờ giá về dưới MA${SWN()} (<span class="num">${fp(r.buy_level,cr)}</span>) rồi cắt lên lại</li><li>Phiên cắt lên phải có khối lượng trên ${cfg('sw_vol') || 1.5} lần trung bình 20 phiên</li></ul></div>`;
+    return `<div class="status"><div class="k gold">CHỜ MUA</div><div class="v">Còn ${r.to_buy.toFixed(1)}% tới MA${SWN()}</div>
+      <ul><li>Mua khi giá đóng cửa <b>trên MA${SWN()} <span class="num">${fp(r.buy_level,cr)}</span></b></li>${r.vol_need ? `<li>Và khối lượng phiên đó trên <b class="num">${Math.round(r.vol_need).toLocaleString('en-US')}</b>${cr ? '' : ' cp'}</li>` : ''}</ul></div>`;
+  }
   return `<div class="status"><div class="k gold">CHỜ MUA</div><div class="v">Còn ${r.to_buy.toFixed(1)}% tới điểm mua</div>
       <ul><li>Mua khi giá đóng cửa <b>trên <span class="num">${fp(r.buy_level,cr)}</span></b> (đỉnh ${cfg('breakout_len')} phiên)</li></ul></div>`;
 }
 
 async function showDetail(sym){
-  const r = (DATA.results || []).find(x => x.sym === sym); if (!r) return;
+  const r = V((DATA.results || []).find(x => x.sym === sym)); if (!r) return;
   CUR = r;
   const tv = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent((r.crypto ? 'BINANCE:' : 'HOSE:') + r.sym);
   if (r.error){
@@ -336,14 +362,14 @@ async function showDetail(sym){
   const trades = (r.trades || []).slice().reverse();
   $('#detailBody').innerHTML = `
     <button class="ibtn x" data-close title="Đóng"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-    <div class="dh"><div class="t"><b>${esc(r.sym)}</b><div>Phiên ${vd(r.date)}</div></div>
+    <div class="dh"><div class="t"><b>${esc(r.sym)}</b><div>Phiên ${vd(r.date)} · ${r.kind === 'sw' ? '🌊 Lướt sóng' : '🚀 Phá đỉnh'}</div></div>
       <div style="text-align:right;padding-right:52px"><div class="num big">${fp(r.close, r.crypto)}</div><div class="num ${r.chg>=0?'up':'dn'}" style="font-size:13px">${pct(r.chg,2)}</div></div></div>
     ${statusBox(r)}
     <div class="seg" id="seg">${[[60,'3 tháng'],[120,'6 tháng'],[250,'1 năm'],[500,'2 năm']].map(([n,t]) => `<button data-r="${n}" class="${RANGE===n?'on':''}">${t}</button>`).join('')}</div>
     <div class="chartbox" id="chart"><div class="empty">Đang tải biểu đồ…</div></div>
     <div class="hover num" id="hover">Chạm vào biểu đồ để xem giá từng phiên</div>
     <div class="legend"><span><span style="color:var(--up)">▲</span> MUA</span><span><span style="color:var(--dn)">▼</span> BÁN / cắt lỗ</span><span><em></em>Thời gian giữ</span>
-      <span><i style="border-color:var(--gold)"></i>Điểm mua</span><span><i style="border-color:var(--dn)"></i>Cắt lỗ</span><span><i style="border-color:var(--blue)"></i>MA${cfg('ma_len')}</span></div>
+      <span><i style="border-color:var(--gold)${r.kind === 'sw' ? ';border-top-style:solid' : ''}"></i>${r.kind === 'sw' ? 'MA' + SWN() + ' (mua/bán)' : 'Điểm mua'}</span><span><i style="border-color:var(--dn)"></i>Cắt lỗ</span><span><i style="border-color:var(--blue)"></i>MA${cfg('ma_len')}</span></div>
     <h2>Kết quả 5 năm nếu làm theo tín hiệu</h2>
     ${st.n ? `<div class="grid">
       <div class="cell"><small>Tổng lời/lỗ</small><span class="num ${st.total>=0?'up':'dn'}">${pct(st.total)}</span></div>
@@ -375,15 +401,18 @@ function drawChart(r){
   const PH = 250, VH = 46, P = {l:6, r:54, t:14, b:22}; const HT = PH + VH + P.b;
   const ma = []; const M = cfg('ma_len'); let sum = 0;
   for (let i = 0; i < N; i++){ sum += H.c[i]; if (i >= M) sum -= H.c[i-M]; ma.push(i >= M-1 ? sum/M : null); }
+  const SW = r.kind === 'sw', m20 = [];
+  if (SW){ const K = SWN(); let s2 = 0; for (let i = 0; i < N; i++){ s2 += H.c[i]; if (i >= K) s2 -= H.c[i-K]; m20.push(i >= K-1 ? s2/K : null); } }
   const idx = d => H.d.indexOf(d);
   const trades = (r.trades || []).map(t => ({...t, a: idx(t.in_d), b: idx(t.out_d)}));
   if (r.pos) trades.push({in_d: r.pos.in_d, in: r.pos.in, a: idx(r.pos.in_d), b: N - 1, open: true});
   let lo = Infinity, hi = -Infinity;
   for (let i = s0; i < N; i++){ lo = Math.min(lo, H.l[i]); hi = Math.max(hi, H.h[i]); }
   const levels = [];
-  if (r.status === 'wait' || r.status === 'stopped'){ if (r.buy_level) levels.push([r.buy_level, 'var(--gold)', 'Điểm mua']); }
+  if (!SW && (r.status === 'wait' || r.status === 'stopped')){ if (r.buy_level) levels.push([r.buy_level, 'var(--gold)', 'Điểm mua']); }
   if (r.stop && (r.status === 'hold' || r.status === 'sell' || r.status === 'buy')) levels.push([r.stop, 'var(--dn)', r.be ? 'Hòa vốn' : 'Cắt lỗ']);
   levels.forEach(([v]) => { lo = Math.min(lo, v); hi = Math.max(hi, v); });
+  if (SW) for (let i = s0; i < N; i++) if (m20[i] !== null){ lo = Math.min(lo, m20[i]); hi = Math.max(hi, m20[i]); }
   const pad = (hi - lo) * 0.08; lo -= pad; hi += pad * 1.6;
   const cw = (W - P.l - P.r) / n;
   const X = i => P.l + (i - s0 + 0.5) * cw, Y = v => P.t + (1 - (v - lo) / (hi - lo)) * (PH - P.t);
@@ -399,6 +428,8 @@ function drawChart(r){
   // MA
   let d = '', pen = false; for (let i = s0; i < N; i++){ if (ma[i] === null){ pen = false; continue; } d += (pen?'L':'M') + X(i).toFixed(1) + ',' + Y(ma[i]).toFixed(1); pen = true; }
   g += `<path d="${d}" fill="none" stroke="var(--blue)" stroke-width="1.4" stroke-dasharray="4 3" opacity=".8"/>`;
+  if (SW){ let d2 = '', pn = false; for (let i = s0; i < N; i++){ if (m20[i] === null){ pn = false; continue; } d2 += (pn?'L':'M') + X(i).toFixed(1) + ',' + Y(m20[i]).toFixed(1); pn = true; }
+    g += `<path d="${d2}" fill="none" stroke="var(--gold)" stroke-width="2" opacity=".95"/>`; }
   // khối lượng + nến
   const bw = Math.max(1, cw * 0.66);
   for (let i = s0; i < N; i++){
@@ -642,6 +673,7 @@ async function renderPaper(){
       <p class="muted" style="margin:6px 0 0;font-size:13.5px">Nhập số vốn ảo. Từ phiên tới, bot sẽ tự mua bán theo đúng tín hiệu MD Signal trên các mã đang theo dõi, như một nhà đầu tư thật, để huynh trưởng theo dõi lời lỗ hằng ngày.</p>
       <div class="form"><div><label>Vốn ban đầu (triệu đồng)</label><input type="number" id="pCap" value="100" min="1"></div>
       <div><label>Giữ tối đa cùng lúc</label><select id="pMax"><option value="3">3 mã</option><option value="5" selected>5 mã</option><option value="8">8 mã</option></select></div></div>
+      <label style="margin-top:14px">Chiến lược bot sẽ giao dịch</label>${stratBar('stPaper', STRAT).replace('margin:16px 0 0', 'margin:0')}
       <label class="chk"><input type="checkbox" id="pCr"> Giao dịch cả crypto (BTC, ETH)</label>
       <button class="btn pri" id="pOpen">Mở tài khoản ảo</button>
       <div class="note">Mỗi lần mua dùng một phần bằng nhau của tổng tài sản (giữ tối đa 5 mã thì mỗi mã khoảng 1/5), mua theo lô 100 cổ phiếu, đã tính phí 0,15% mỗi chiều và thuế bán 0,1%.</div></div>`;
@@ -650,22 +682,23 @@ async function renderPaper(){
       const ld = lastDataDate();
       const t = new Date(), today = new Date(t.getTime() - t.getTimezoneOffset() * 6e4).toISOString().slice(0, 10);
       const st = [nextDay(ld), nextDay(today)].sort().pop();
-      savePaper({start: st, deposits: [{d: ld, amt: cap}], maxPos: +$('#pMax').value, useCrypto: $('#pCr').checked, created: ld});
+      savePaper({start: st, deposits: [{d: ld, amt: cap}], maxPos: +$('#pMax').value, useCrypto: $('#pCr').checked, created: ld, strat: $('#stPaper .on').dataset.st});
       renderPaper();
     };
     return;
   }
   el.innerHTML = '<div class="empty">Đang tính tài khoản…</div>';
   await loadAllHist((DATA.results || []).filter(r => !r.error).map(r => r.sym));
-  const R = simulatePortfolio({...acc, usdVnd: cfg('usd_vnd') || 26000, results: DATA.results});
-  const RA = simulatePortfolio({...acc, aiMin: 50, usdVnd: cfg('usd_vnd') || 26000, results: DATA.results});
-  const pend = (DATA.results || []).filter(r => !r.error && r.status === 'buy' && (acc.useCrypto || !r.crypto) && !R.positions.some(p => p.sym === r.sym));
-  const sellNext = R.positions.filter(p => { const r = DATA.results.find(x => x.sym === p.sym); return r && r.status === 'sell'; });
+  const AST = acc.strat || 'bo', RES = (DATA.results || []).map(r => V(r, AST));
+  const R = simulatePortfolio({...acc, usdVnd: cfg('usd_vnd') || 26000, results: RES});
+  const RA = simulatePortfolio({...acc, aiMin: 50, usdVnd: cfg('usd_vnd') || 26000, results: RES});
+  const pend = RES.filter(r => !r.error && r.status === 'buy' && (acc.useCrypto || !r.crypto) && !R.positions.some(p => p.sym === r.sym));
+  const sellNext = R.positions.filter(p => { const r = RES.find(x => x.sym === p.sym); return r && r.status === 'sell'; });
   const ret = R.invested ? R.profit / R.invested * 100 : 0;
   el.innerHTML = `
     <div class="hero"><small>Tổng tài sản ảo</small><div class="eq num">${money(R.equity)}</div>
       <div class="sub"><span>Lời/lỗ <b class="${R.profit>=0?'up':'dn'}">${R.profit>=0?'+':''}${mshort(R.profit)} (${pct(ret)})</b></span><span>Tiền mặt <b>${mshort(R.cash)}</b></span><span>Đã nạp <b>${mshort(R.invested)}</b></span></div>
-      <div class="sub" style="margin-top:6px"><span>Bắt đầu ${vd(acc.start)} · giữ tối đa ${acc.maxPos} mã${acc.useCrypto ? ' · có crypto' : ''}</span></div>
+      <div class="sub" style="margin-top:6px"><span>${AST === 'sw' ? '🌊 Lướt sóng' : '🚀 Phá đỉnh'} · bắt đầu ${vd(acc.start)} · giữ tối đa ${acc.maxPos} mã${acc.useCrypto ? ' · có crypto' : ''}</span></div>
     </div>
     <h2>So sánh: có AI lọc hay không <span>AI ≥ 50 mới mua</span></h2>
     <div class="cmp"><div class="cell"><small>Bản gốc (mọi tín hiệu)</small><span class="num ${R.profit>=0?'up':'dn'}">${R.profit>=0?'+':''}${mshort(R.profit)}</span><br><small>${R.wins}/${R.closed} lệnh có lời</small></div>
@@ -703,6 +736,7 @@ function renderBacktestForm(){
       <div><label>Giữ tối đa cùng lúc</label><select id="bMax"><option value="3">3 mã</option><option value="5" selected>5 mã</option><option value="8">8 mã</option></select></div>
       <div><label>Tỷ giá USD (crypto)</label><input type="number" id="bFx" value="${cfg('usd_vnd') || 26000}"></div>
     </div>
+    <label style="margin-top:14px">Chiến lược</label>${stratBar('stBt', STRAT).replace('margin:16px 0 0', 'margin:0')}
     <label class="chk"><input type="checkbox" id="bCr"> Gồm cả crypto (dữ liệu có từ 2024)</label>
     <label class="chk"><input type="checkbox" id="bAi"> So sánh thêm bản lọc AI (điểm AI có từ 2024)</label>
     <button class="btn pri" id="bRun">▶ Chạy backtest</button></div>
@@ -714,13 +748,14 @@ async function runBacktest(){
   const out = $('#bOut'); out.innerHTML = '<div class="empty">Đang chạy…</div>';
   await loadAllHist((DATA.results || []).filter(r => !r.error).map(r => r.sym));
   const cap = (parseFloat($('#bCap').value) || 100) * 1e6, start = $('#bFrom').value;
-  const o = {start, deposits: [{d: '0000', amt: cap}], maxPos: +$('#bMax').value, useCrypto: $('#bCr').checked, usdVnd: +$('#bFx').value || 26000, results: DATA.results};
+  const BST = $('#stBt .on').dataset.st;
+  const o = {start, deposits: [{d: '0000', amt: cap}], maxPos: +$('#bMax').value, useCrypto: $('#bCr').checked, usdVnd: +$('#bFx').value || 26000, results: (DATA.results || []).map(r => V(r, BST))};
   const R = simulatePortfolio(o);
   if (R.curve.length < 2){ out.innerHTML = '<div class="empty">Không đủ dữ liệu cho khoảng thời gian này.</div>'; return; }
   const B = benchmark(o, R.dates), bret = (B[B.length-1] - 1) * 100;
   const RA = $('#bAi').checked ? simulatePortfolio({...o, aiMin: 50}) : null;
   out.innerHTML = `
-    <div class="hero"><small>Vốn ${mshort(cap)} từ ${vd(R.dates[0])} đến ${vd(R.lastDate)} thành</small>
+    <div class="hero"><small>${BST === 'sw' ? '🌊 Lướt sóng' : '🚀 Phá đỉnh'} · vốn ${mshort(cap)} từ ${vd(R.dates[0])} đến ${vd(R.lastDate)} thành</small>
       <div class="eq num ${R.profit>=0?'up':'dn'}">${money(R.equity)}</div>
       <div class="sub"><span>Lời <b class="${R.profit>=0?'up':'dn'}">${pct(R.twr)}</b></span>${R.cagr !== null ? `<span>Trung bình <b>${pct(R.cagr)}/năm</b></span>` : ''}<span>Sụt giảm lớn nhất <b class="dn">${pct(R.mdd)}</b></span><span>Lệnh thắng <b>${R.wins}/${R.closed}</b></span></div>
       <div class="story" style="margin-top:10px">Cùng thời gian, nếu chia đều tiền mua các mã rồi giữ nguyên thì được <b class="${bret>=0?'up':'dn'}">${pct(bret)}</b>.${RA ? ` Bản lọc AI (chỉ mua khi AI ≥ 50) được <b class="${RA.twr>=0?'up':'dn'}">${pct(RA.twr)}</b>, sụt giảm lớn nhất ${pct(RA.mdd)}.` : ''}</div></div>
@@ -728,7 +763,7 @@ async function runBacktest(){
     <table style="margin-top:8px"><tr><th>Năm</th><th class="r">Lời/lỗ</th><th class="r">Số tiền</th></tr>${R.years.map(y => `<tr><td>${y.y}${y.y === R.lastDate.slice(0,4) ? ' <small>(đến nay)</small>' : ''}</td><td class="r num ${y.ret>=0?'up':'dn'}" style="font-weight:600">${pct(y.ret)}</td><td class="r num">${y.pnl>=0?'+':''}${mshort(y.pnl)}</td></tr>`).join('')}</table>
     <h2>Diễn biến tài sản</h2>
     ${lineChart(R.dates, [{v: R.curve.map(p => p.eq), c: 'var(--up)'}, {v: B.map(x => x * cap), c: 'var(--blue)', dash: true, w: 1.5}].concat(RA ? [{v: RA.curve.map(p => p.eq), c: 'var(--gold)', w: 1.6}] : []))}
-    <div class="lg"><span><i style="background:var(--up)"></i>Làm theo MD Signal</span><span><i style="background:var(--blue)"></i>Mua đều rồi giữ</span>${RA ? '<span><i style="background:var(--gold)"></i>Bản lọc AI</span>' : ''}</div>
+    <div class="lg"><span><i style="background:var(--up)"></i>${BST === 'sw' ? 'Lướt sóng' : 'Phá đỉnh'}</span><span><i style="background:var(--blue)"></i>Mua đều rồi giữ</span>${RA ? '<span><i style="background:var(--gold)"></i>Bản lọc AI</span>' : ''}</div>
     <details><summary>Xem ${R.log.filter(x => x.side !== 'BỎ QUA').length} lệnh đã thực hiện</summary>${logTable(R.log.filter(x => x.side !== 'BỎ QUA'))}</details>
     <div class="note">Giả định: khớp ở giá mở cửa phiên sau tín hiệu, mua lô 100 cp, phí 0,15% mỗi chiều, thuế bán 0,1%. Kết quả quá khứ không bảo đảm tương lai. Danh sách mã là danh sách hiện tại nên kết quả có thể đẹp hơn thực tế.</div>`;
 }
@@ -848,6 +883,10 @@ async function load(){
 document.addEventListener('click', e => {
   if (e.target.closest('[data-close]')){ closeLayers(); return; }
   const tb = e.target.closest('[data-tab]'); if (tb){ setTab(tb.dataset.tab); window.scrollTo(0, 0); return; }
+  const sb = e.target.closest('[data-st]'); if (sb){ const grp = sb.parentElement;
+    grp.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === sb));
+    if (grp.id === 'stSig'){ STRAT = sb.dataset.st; store.set('strat', STRAT); render(); }
+    return; }
   const rg = e.target.closest('[data-r]'); if (rg){ RANGE = +rg.dataset.r; store.set('range', RANGE); document.querySelectorAll('#seg button').forEach(b => b.classList.toggle('on', +b.dataset.r === RANGE)); if (CUR && HIST[CUR.sym]) drawChart(CUR); return; }
   const s = e.target.closest('[data-s]'); if (s){ showDetail(s.dataset.s); return; }
 });
