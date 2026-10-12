@@ -25,6 +25,9 @@ CONFIG_PATH = os.path.join(ROOT, "config.json")
 DOCS = os.path.join(ROOT, "docs")
 DATA_PATH = os.path.join(DOCS, "data.json")
 HIST_DIR = os.path.join(DOCS, "h")
+INFO_PATH = os.path.join(DOCS, "info.json")
+AI_PATH = os.path.join(DOCS, "ai_scores.json")
+BARS = {}
 APP_TEMPLATE = os.path.join(ROOT, "app.html")
 
 VN_TZ = dt.timezone(dt.timedelta(hours=7))
@@ -36,21 +39,16 @@ DEFAULT_CONFIG = {
         "TCB", "SSI", "DBC", "CII", "DXG", "FPT", "VIX", "GEX", "PLX", "GVR",
         "DGW", "MWG", "MSN", "VCB", "BID", "HDC", "TPB", "BTCUSDT", "ETHUSDT",
     ],
-    "sma_short": 10,
-    "sma_long": 15,
-    "use_trend": True,
-    "trend_len": 50,
-    "use_vol": True,
-    "vol_mult": 1.0,
-    "use_adx": True,
-    "adx_min": 20,
-    "atr_mult": 1.5,
-    "rr": 2.0,
+    "breakout_len": 55,   # MUA khi đóng cửa vượt đỉnh N phiên
+    "exit_len": 20,       # BÁN khi đóng cửa thủng đáy N phiên
+    "ma_len": 200,        # chỉ mua khi giá trên MA này (xu hướng lớn tăng)
+    "stop_atr": 3.0,      # cắt lỗ = giá − ATR × hệ số
+    "be_atr": 2.0,        # lời được ATR × hệ số thì dời stop về giá mua
+    "usd_vnd": 26000,     # tỷ giá quy đổi crypto (USD) sang VND cho tài khoản ảo
+    "paper": None,        # tài khoản giao dịch ảo (app tự ghi)
     "telegram_chat_id": None,
 }
 
-EVENT_TEXT = {1: "MUA", -1: "BÁN", -2: "CHẠM STOP", 2: "ĐẠT MỤC TIÊU"}
-EVENT_ICON = {1: "🟢", -1: "🔴", -2: "⛔", 2: "🎯"}
 
 
 # ───────────────────────────── Tiện ích ─────────────────────────────
@@ -226,20 +224,15 @@ def fetch_bars(sym):
     raise RuntimeError(" | ".join(errors))
 
 
-# ───────────────────────────── Chỉ báo ─────────────────────────────
-def sma(x, n):
-    out, s, q = [None] * len(x), 0.0, []
-    for i, v in enumerate(x):
-        if v is None:
-            q, s = [], 0.0
-            continue
-        q.append(v)
-        s += v
-        if len(q) > n:
-            s -= q.pop(0)
-        if len(q) == n:
-            out[i] = s / n
-    return out
+# ───────────────────────────── Chiến lược ─────────────────────────────
+# Chiến lược "Phá đỉnh xu hướng" (đã kiểm thử trên 5 năm dữ liệu thật):
+#   MUA  : giá đóng cửa vượt đỉnh cao nhất 55 phiên trước đó VÀ nằm trên MA200
+#   BÁN  : giá đóng cửa thủng đáy thấp nhất 20 phiên trước đó
+#   CẮT LỖ: giá chạm (giá mua − 3 × ATR14)
+#   DỜI STOP: khi giá đã lên được (giá mua + 2 × ATR14) → dời điểm cắt lỗ về giá mua (hòa vốn)
+# Khớp lệnh ở giá MỞ CỬA phiên sau ngày có tín hiệu. Cổ phiếu VN không bán trước T+3.
+# Phí: VN 0.15% mua, 0.15% + 0.1% thuế khi bán; crypto 0.1% mỗi chiều.
+EV_BUY, EV_SELL, EV_STOP, EV_BE = 1, -1, -2, 3
 
 
 def rma(x, n):
@@ -259,101 +252,104 @@ def rma(x, n):
     return out
 
 
-def indicators(bars, cfg):
-    c = [b["c"] for b in bars]
-    h = [b["h"] for b in bars]
-    l = [b["l"] for b in bars]
-    v = [b["v"] for b in bars]
+def sma(x, n):
+    out, s = [None] * len(x), 0.0
+    for i, v in enumerate(x):
+        s += v
+        if i >= n:
+            s -= x[i - n]
+        if i >= n - 1:
+            out[i] = s / n
+    return out
+
+
+def run_strategy(bars, cfg, crypto):
+    o = [b["o"] for b in bars]; h = [b["h"] for b in bars]
+    l = [b["l"] for b in bars]; c = [b["c"] for b in bars]
     n = len(bars)
-    tr = [None] + [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])) for i in range(1, n)]
-    pdm, mdm = [None], [None]
-    for i in range(1, n):
-        up, dn = h[i] - h[i - 1], l[i - 1] - l[i]
-        pdm.append(up if up > dn and up > 0 else 0.0)
-        mdm.append(dn if dn > up and dn > 0 else 0.0)
+    B, E, M = cfg["breakout_len"], cfg["exit_len"], cfg["ma_len"]
+    tr = [h[0] - l[0]] + [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])) for i in range(1, n)]
     atr = rma(tr, 14)
-    p_s, m_s = rma(pdm, 14), rma(mdm, 14)
-    dx = [None] * n
-    for i in range(n):
-        if atr[i] and p_s[i] is not None and m_s[i] is not None:
-            p, m = 100 * p_s[i] / atr[i], 100 * m_s[i] / atr[i]
-            dx[i] = abs(p - m) / (p + m if p + m else 1)
-    adx = [None if x is None else 100 * x for x in rma(dx, 14)]
-    return {
-        "c": c, "v": v,
-        "s": sma(c, cfg["sma_short"]), "L": sma(c, cfg["sma_long"]),
-        "t": sma(c, cfg["trend_len"]), "vma": sma(v, 20),
-        "atr": atr, "adx": adx,
-    }
+    ma = sma(c, M)
+    hh = [None if i < B else max(h[i - B:i]) for i in range(n)]
+    ll = [None if i < E else min(l[i - E:i]) for i in range(n)]
+    fee_b = 0.001 if crypto else 0.0015
+    fee_s = 0.001 if crypto else 0.0025
+    tmin = 0 if crypto else 3
+
+    events = [0] * n
+    trades, pos, pending = [], None, None
+    first = max(M, B, 15)
+    for i in range(first, n):
+        if pending == "buy" and pos is None:
+            pos = {"i": i, "sig_d": bars[i - 1]["d"], "raw": o[i], "cost": o[i] * (1 + fee_b),
+                   "stop": c[i - 1] - cfg["stop_atr"] * atr[i - 1], "be": False}
+        elif pending == "sell" and pos is not None:
+            trades.append(_close(pos, o[i], fee_s, i, bars, "Bán"))
+            pos = None
+        pending = None
+        if pos is not None:
+            held = i - pos["i"]
+            if held >= tmin and l[i] <= pos["stop"]:
+                t = _close(pos, min(o[i], pos["stop"]), fee_s, i, bars, "Cắt lỗ")
+                if pos["be"] and t["ret"] > -1:
+                    t["why"] = "Hòa vốn"
+                trades.append(t)
+                pos = None
+                events[i] = EV_STOP
+                continue
+            if not pos["be"] and atr[i] and h[i] >= pos["raw"] + cfg["be_atr"] * atr[i]:
+                pos["be"] = True
+                pos["stop"] = max(pos["stop"], pos["raw"])
+                events[i] = EV_BE
+            if held + 1 >= tmin and ll[i] is not None and c[i] < ll[i]:
+                pending = "sell"
+                events[i] = EV_SELL
+        elif hh[i] is not None and ma[i] is not None and atr[i] and c[i] > hh[i] and c[i] > ma[i]:
+            pending = "buy"
+            events[i] = EV_BUY
+
+    last = n - 1
+    nxt_hh = max(h[n - B:]) if n >= B else None    # đỉnh 55 phiên áp dụng cho phiên tới
+    nxt_ll = min(l[n - E:]) if n >= E else None
+    state = {"pending": pending, "pos": pos, "atr": atr[last], "ma": ma[last],
+             "buy_level": nxt_hh, "sell_level": nxt_ll,
+             "pending_stop": (c[last] - cfg["stop_atr"] * atr[last]) if pending == "buy" else None}
+    return events, trades, state
 
 
-def run_signals(bars, cfg):
-    """Mô phỏng y hệt MD Signal Scanner trên TradingView. Trả về sự kiện từng nến + lệnh."""
-    ind = indicators(bars, cfg)
-    c, s, L = ind["c"], ind["s"], ind["L"]
-    n = len(bars)
-    st, stp, tgt, tgt_done = 0, None, None, False
-    ev = [0] * n
-    trades, open_trade = [], None
-    for i in range(n):
-        ok = i > 0 and None not in (s[i], L[i], s[i - 1], L[i - 1])
-        cross_up = ok and s[i] > L[i] and s[i - 1] <= L[i - 1]
-        cross_dn = ok and s[i] < L[i] and s[i - 1] >= L[i - 1]
-        vol_ok = (not cfg["use_vol"]) or (ind["vma"][i] is not None and
-                                          ind["v"][i] > ind["vma"][i] * cfg["vol_mult"])
-        adx_ok = (not cfg["use_adx"]) or (ind["adx"][i] is not None and ind["adx"][i] > cfg["adx_min"])
-        up_ok = (not cfg["use_trend"]) or (ind["t"][i] is not None and c[i] > ind["t"][i])
-        buy = cross_up and vol_ok and adx_ok and up_ok and ind["atr"][i] is not None
-
-        e = 0
-        if st == 1:
-            if c[i] <= stp:
-                e, st = -2, 0
-            elif c[i] >= tgt and not tgt_done:
-                e, tgt_done = 2, True
-        if cross_dn and st == 1:
-            e, st = -1, 0
-        if st == 0 and open_trade:
-            open_trade.update(exit=c[i], exit_d=bars[i]["d"], why=EVENT_TEXT[e],
-                              ret=(c[i] / open_trade["entry"] - 1) * 100,
-                              days=i - open_trade["i"])
-            trades.append(open_trade)
-            open_trade = None
-        if buy:
-            e, st = 1, 1
-            stp = c[i] - cfg["atr_mult"] * ind["atr"][i]
-            tgt = c[i] + cfg["rr"] * cfg["atr_mult"] * ind["atr"][i]
-            tgt_done = False
-            open_trade = {"entry": c[i], "entry_d": bars[i]["d"], "i": i,
-                          "stop": stp, "target": tgt}
-        if st == 0:
-            stp = tgt = None
-        ev[i] = e
-    return ind, ev, trades, open_trade, st, stp, tgt
+def _close(pos, px, fee_s, i, bars, why):
+    return {"sig_d": pos["sig_d"], "in_d": bars[pos["i"]]["d"], "in": pos["raw"],
+            "out_d": bars[i]["d"], "out": px, "why": why, "days": i - pos["i"],
+            "ret": (px * (1 - fee_s) / pos["cost"] - 1) * 100}
 
 
-def stats(trades):
+def stats(trades, bars):
     if not trades:
         return {"n": 0}
     rets = [t["ret"] for t in trades]
     wins = [r for r in rets if r > 0]
-    total = 1.0
+    loss = [r for r in rets if r <= 0]
+    eq, peak, mdd = 1.0, 1.0, 0.0
     for r in rets:
-        total *= 1 + r / 100
+        eq *= 1 + r / 100
+        peak = max(peak, eq)
+        mdd = min(mdd, eq / peak - 1)
+    i0 = next(k for k, b in enumerate(bars) if b["d"] == trades[0]["in_d"])
     return {
-        "n": len(rets),
-        "win_rate": round(100 * len(wins) / len(rets), 1),
-        "avg": round(sum(rets) / len(rets), 2),
-        "best": round(max(rets), 2),
-        "worst": round(min(rets), 2),
-        "total": round((total - 1) * 100, 1),
-        "avg_days": round(sum(t["days"] for t in trades) / len(trades), 1),
-        "since": trades[0]["entry_d"],
+        "n": len(rets), "wins": len(wins),
+        "win_rate": round(100 * len(wins) / len(rets)),
+        "avg_win": round(sum(wins) / len(wins), 1) if wins else 0,
+        "avg_loss": round(sum(loss) / len(loss), 1) if loss else 0,
+        "best": round(max(rets), 1), "worst": round(min(rets), 1),
+        "total": round((eq - 1) * 100, 1), "mdd": round(mdd * 100, 1),
+        "hold_all": round((bars[-1]["c"] / bars[i0]["o"] - 1) * 100, 1),
+        "since": trades[0]["in_d"],
     }
 
 
 def save_history(sym, bars):
-    """Lưu lịch sử giá ngày (dùng cho biểu đồ nến trong app và để nghiên cứu)."""
+    """Lưu lịch sử giá ngày (dùng cho biểu đồ nến trong app)."""
     os.makedirs(HIST_DIR, exist_ok=True)
     h = {"d": [b["d"] for b in bars]}
     for k in ("o", "h", "l", "c"):
@@ -372,39 +368,42 @@ def r2(x, crypto):
 def analyse(sym, cfg):
     bars, src = fetch_bars(sym)
     save_history(sym, bars)
+    BARS[sym] = bars
     crypto = is_crypto(sym)
-    ind, ev, trades, open_trade, st, stp, tgt = run_signals(bars, cfg)
+    events, trades, stt = run_strategy(bars, cfg, crypto)
     i = len(bars) - 1
-    events = [{"d": bars[k]["d"], "type": ev[k], "price": r2(bars[k]["c"], crypto)}
-              for k in range(len(bars)) if ev[k]]
-    tail = 90
+    close = bars[i]["c"]
+    pos = stt["pos"]
+    if stt["pending"] == "buy":
+        status = "buy"
+    elif pos is not None and stt["pending"] == "sell":
+        status = "sell"
+    elif pos is not None:
+        status = "hold"
+    elif events[i] == EV_STOP:
+        status = "stopped"
+    else:
+        status = "wait"
     res = {
         "sym": sym, "crypto": crypto, "source": src,
-        "date": bars[i]["d"],
-        "close": r2(bars[i]["c"], crypto),
-        "chg": round((bars[i]["c"] / bars[i - 1]["c"] - 1) * 100, 2),
-        "trend_up": bool(ind["s"][i] is not None and ind["L"][i] is not None and ind["s"][i] > ind["L"][i]),
-        "sma_s": r2(ind["s"][i], crypto), "sma_l": r2(ind["L"][i], crypto),
-        "adx": None if ind["adx"][i] is None else round(ind["adx"][i], 1),
-        "state": st, "stop": r2(stp, crypto), "target": r2(tgt, crypto),
-        "event": ev[i],
-        "events": events[-8:][::-1],
-        "open": None,
-        "stats": stats(trades),
-        "recent_trades": [{k: (r2(t[k], crypto) if k in ("entry", "exit") else
-                               round(t[k], 2) if k == "ret" else t[k])
-                           for k in ("entry_d", "entry", "exit_d", "exit", "ret", "why")}
-                          for t in trades[-5:][::-1]],
-        "chart": {
-            "d": [b["d"] for b in bars[-tail:]],
-            "c": [r2(x, crypto) for x in ind["c"][-tail:]],
-            "s": [r2(x, crypto) for x in ind["s"][-tail:]],
-            "l": [r2(x, crypto) for x in ind["L"][-tail:]],
-        },
+        "date": bars[i]["d"], "close": r2(close, crypto),
+        "chg": round((close / bars[i - 1]["c"] - 1) * 100, 2),
+        "status": status, "event": events[i],
+        "uptrend": bool(stt["ma"] and close > stt["ma"]),
+        "ma": r2(stt["ma"], crypto),
+        "buy_level": r2(stt["buy_level"], crypto),
+        "sell_level": r2(stt["sell_level"], crypto),
+        "to_buy": round((stt["buy_level"] / close - 1) * 100, 1) if stt["buy_level"] else None,
+        "stop": r2(pos["stop"] if pos else stt["pending_stop"], crypto),
+        "be": bool(pos and pos["be"]),
+        "pos": None,
+        "stats": stats(trades, bars),
+        "trades": [{k: (r2(t[k], crypto) if k in ("in", "out") else round(t[k], 2) if k == "ret" else t[k])
+                    for k in ("sig_d", "in_d", "in", "out_d", "out", "ret", "why", "days")} for t in trades],
     }
-    if open_trade:
-        res["open"] = {"entry": r2(open_trade["entry"], crypto), "entry_d": open_trade["entry_d"],
-                       "pnl": round((bars[i]["c"] / open_trade["entry"] - 1) * 100, 2)}
+    if pos is not None:
+        res["pos"] = {"sig_d": pos["sig_d"], "in_d": bars[pos["i"]]["d"], "in": r2(pos["raw"], crypto),
+                      "pnl": round((close / pos["raw"] - 1) * 100, 1), "days": i - pos["i"] + 1}
     return res
 
 
@@ -458,15 +457,57 @@ def vn_date(d):
 
 def event_line(r, e):
     cr = r["crypto"]
-    line = f"{EVENT_ICON[e]} <b>{EVENT_TEXT[e]} {r['sym']}</b> · giá {fmt_px(r['close'], cr)}"
-    if e == 1:
-        line += f"\n      Stop {fmt_px(r['stop'], cr)} · Mục tiêu {fmt_px(r['target'], cr)}"
-    elif e == 2:
-        line += "\n      Cân nhắc chốt lời một phần / dời stop"
-    elif e in (-1, -2) and r["recent_trades"]:
-        t = r["recent_trades"][0]
-        line += f"\n      Lệnh mua {vn_date(t['entry_d'])} giá {fmt_px(t['entry'], cr)} → {t['ret']:+.1f}%"
-    return line
+    sym, px = r["sym"], fmt_px(r["close"], cr)
+    if e == EV_BUY:
+        line = (f"🟢 <b>MUA {sym}</b> · giá {px}\n"
+                f"      Vượt đỉnh {r_cfg('breakout_len')} phiên. 👉 Mua đầu phiên tới\n"
+                f"      Cắt lỗ nếu giá chạm {fmt_px(r['stop'], cr)}")
+        return line + extra_lines(r)
+    if e == EV_SELL:
+        line = f"🔴 <b>BÁN {sym}</b> · giá {px}\n      Thủng đáy {r_cfg('exit_len')} phiên. 👉 Bán đầu phiên tới"
+        if r.get("pos"):
+            line += f"\n      Mua {vn_date(r['pos']['in_d'])} giá {fmt_px(r['pos']['in'], cr)} → đang {r['pos']['pnl']:+.1f}%"
+        return line
+    if e == EV_STOP:
+        line = f"⛔ <b>CẮT LỖ {sym}</b> · giá chạm điểm dừng"
+        if r["trades"]:
+            t = r["trades"][-1]
+            line += (f"\n      Mua {vn_date(t['in_d'])} giá {fmt_px(t['in'], cr)} → bán {fmt_px(t['out'], cr)}"
+                     f" ({t['ret']:+.1f}%). 👉 Bán ngay nếu chưa bán")
+        return line
+    if e == EV_BE:
+        return (f"🛡 <b>DỜI STOP {sym}</b> · giá {px}\n"
+                f"      Đã lời đủ: dời điểm cắt lỗ lên giá mua {fmt_px(r['stop'], cr)} → lệnh này không còn lỗ")
+    return ""
+
+
+_CFG = {}
+_INFO = {}
+
+
+def extra_lines(r):
+    """Điểm AI, sức khỏe tài chính và tin gần nhất kèm theo tín hiệu MUA."""
+    out = []
+    if r.get("ai") is not None:
+        a = r["ai"]
+        out.append(f"      🤖 AI chấm {a}/100 ({'cao' if a >= 60 else 'trung bình' if a >= 40 else 'thấp'}, chỉ để tham khảo)")
+    inf = _INFO.get(r["sym"], {})
+    f = inf.get("fin")
+    if f:
+        g = f.get("np_g")
+        out.append(f"      📊 BCTC {f['q'].replace('-', ' ')}: {f['grade']}" + (f", LN {g*100:+.0f}% cùng kỳ" if g is not None else ""))
+    n = (inf.get("news") or {})
+    if n.get("sent14") is not None:
+        s = n["sent14"]
+        out.append(f"      📰 Tin 2 tuần qua: {'tích cực' if s > 0 else 'tiêu cực' if s < 0 else 'trung tính'} ({s:+d})")
+    return ("\n" + "\n".join(out)) if out else ""
+
+
+def r_cfg(k):
+    return _CFG.get(k, DEFAULT_CONFIG.get(k))
+
+
+STATUS_LINE = {"hold": "🟢", "buy": "🆕", "sell": "🔴", "stopped": "⛔", "wait": "⏳"}
 
 
 def summary_text(results):
@@ -475,9 +516,20 @@ def summary_text(results):
         if "error" in r:
             lines.append(f"❓ {r['sym']}: lỗi dữ liệu")
             continue
-        trend = "🟩" if r["trend_up"] else "🟥"
-        hold = " · <b>đang giữ</b>" if r["state"] == 1 else ""
-        lines.append(f"{trend} <b>{r['sym']}</b> {fmt_px(r['close'], r['crypto'])} ({r['chg']:+.1f}%){hold}")
+        cr = r["crypto"]
+        st = r["status"]
+        if st == "hold":
+            tail = f"đang giữ {r['pos']['pnl']:+.1f}%"
+        elif st == "buy":
+            tail = "MUA phiên tới"
+        elif st == "sell":
+            tail = "BÁN phiên tới"
+        elif not r["uptrend"]:
+            tail = "xu hướng giảm, đứng ngoài"
+        else:
+            tail = f"chờ mua, còn {r['to_buy']:.1f}% tới điểm mua"
+        icon = "⚪" if st == "wait" and not r["uptrend"] else STATUS_LINE.get(st, "⏳")
+        lines.append(f"{icon} <b>{r['sym']}</b> {fmt_px(r['close'], cr)} · {tail}")
     return "\n".join(lines)
 
 
@@ -505,7 +557,7 @@ MANIFEST = {
     ],
 }
 
-SERVICE_WORKER = """const CACHE = 'mdsignal-v1';
+SERVICE_WORKER = """const CACHE = 'mdsignal-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon.svg'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -618,11 +670,41 @@ def load_config():
     return cfg
 
 
+def get_chat(token, cfg):
+    chat_id = cfg.get("telegram_chat_id")
+    if not chat_id:
+        chat_id = tg_find_chat(token)
+        if chat_id:
+            user_cfg = load_json(CONFIG_PATH, {}) or {}
+            user_cfg["telegram_chat_id"] = chat_id
+            save_json(CONFIG_PATH, user_cfg)
+            cfg["telegram_chat_id"] = chat_id
+    return chat_id
+
+
 def main():
     mode = (os.environ.get("MODE") or "scan").strip().lower()
     token = (os.environ.get("TELEGRAM_TOKEN") or "").strip()
     cfg = load_config()
+    _CFG.update(cfg)
     build_site()
+    _INFO.update(load_json(INFO_PATH, {}))
+
+    if mode == "news":
+        import news_fin
+        key = (os.environ.get("DEEPSEEK_API_KEY") or "").strip() or None
+        msg, st = news_fin.run(cfg["symbols"], DOCS, key, log)
+        chat_id = get_chat(token, cfg) if token else None
+        if chat_id and msg:
+            link = app_url()
+            tg_send(token, chat_id, msg + (f'\n\n📱 <a href="{link}">Mở app MD Signal</a>' if link else ""))
+        if chat_id and key and st["ai"] != "ok":
+            tg_send(token, chat_id, f"⚠️ <b>MD Signal</b>: AI đọc tin đang lỗi: {st['ai']}")
+        n_vn = sum(1 for x in cfg["symbols"] if not is_crypto(x))
+        if chat_id and n_vn and len(st["errors"]) >= n_vn:
+            tg_send(token, chat_id, "⚠️ <b>MD Signal</b>: không lấy được tin tức/BCTC từ máy chủ GitHub.\n"
+                                    f"Ví dụ lỗi: {st['errors'][0]}\nGửi ảnh chụp mục Actions để được hỗ trợ đổi nguồn.")
+        return
 
     prev = load_json(DATA_PATH, {})
     alerted = prev.get("alerted", {}) if isinstance(prev, dict) else {}
@@ -637,6 +719,15 @@ def main():
             log(f"✗ {sym:<8} {r['error']}")
         results.append(r)
         time.sleep(0.3)
+
+    # Điểm AI (chế độ dự thính)
+    ai_status = "tắt"
+    try:
+        import ai_score
+        ai_status = ai_score.apply_ai(results, BARS, AI_PATH, log)
+    except Exception as e:
+        ai_status = f"lỗi: {str(e)[:150]}"
+        log("AI lỗi:", e)
 
     # Sự kiện mới (nến cuối) chưa báo
     new_events = []
@@ -659,12 +750,7 @@ def main():
     tg_status = "chưa cài token"
     if token:
         try:
-            if not chat_id:
-                chat_id = tg_find_chat(token)
-                if chat_id:
-                    user_cfg = load_json(CONFIG_PATH, {}) or {}
-                    user_cfg["telegram_chat_id"] = chat_id
-                    save_json(CONFIG_PATH, user_cfg)
+            chat_id = get_chat(token, cfg)
             if not chat_id:
                 tg_status = "chưa tìm thấy chat — hãy nhắn /start cho bot rồi chạy lại"
             else:
@@ -675,9 +761,11 @@ def main():
                             f"Cập nhật {now_vn:%H:%M %d/%m/%Y}\n\n" + summary_text(results))
                     if bad:
                         text += f"\n\n⚠️ {len(bad)} mã chưa lấy được dữ liệu, xem chi tiết trong app."
+                    text += f"\n\n🤖 Điểm AI: {ai_status}"
+                    text += f"\n📰 Đọc tin/BCTC: {_INFO.get('_ai', 'chưa chạy lần nào (chạy chế độ news)')}"
                     tg_send(token, chat_id, text + link_line)
                 elif new_events:
-                    order = {1: 0, -2: 1, -1: 2, 2: 3}
+                    order = {EV_BUY: 0, EV_STOP: 1, EV_SELL: 2, EV_BE: 3}
                     new_events.sort(key=lambda r: (order[r["event"]], r["sym"]))
                     days = sorted({r["date"] for r in new_events})
                     head = "📢 <b>MD Signal – tín hiệu phiên " + ", ".join(vn_date(d) for d in days) + "</b>"
@@ -703,6 +791,7 @@ def main():
         "updated": now_vn.isoformat(timespec="minutes"),
         "mode": mode,
         "telegram": tg_status,
+        "ai": ai_status,
         "config": public_cfg,
         "results": results,
         "alerted": alerted,
