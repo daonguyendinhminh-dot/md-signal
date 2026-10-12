@@ -24,10 +24,11 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 DOCS = os.path.join(ROOT, "docs")
 DATA_PATH = os.path.join(DOCS, "data.json")
+HIST_DIR = os.path.join(DOCS, "h")
 APP_TEMPLATE = os.path.join(ROOT, "app.html")
 
 VN_TZ = dt.timezone(dt.timedelta(hours=7))
-HISTORY_DAYS = 760          # khoảng 2 năm dữ liệu ngày để tính chỉ báo + thống kê
+HISTORY_DAYS = 1900         # khoảng 5 năm dữ liệu ngày
 VN_CLOSE_MIN = 15 * 60      # sau 15:00 giờ VN coi như nến ngày đã đóng
 
 DEFAULT_CONFIG = {
@@ -127,7 +128,7 @@ def vn_dnse(sym):
 def vn_vci(sym):
     url = "https://trading.vietcap.com.vn/api/chart/OHLCChart/gap-chart"
     body = {"timeFrame": "ONE_DAY", "symbols": [sym],
-            "to": int(time.time()) + 86400, "countBack": 520}
+            "to": int(time.time()) + 86400, "countBack": 1300}
     j = http_json(url, data=body, headers={
         "Referer": "https://trading.vietcap.com.vn/",
         "Origin": "https://trading.vietcap.com.vn"})
@@ -137,7 +138,7 @@ def vn_vci(sym):
 
 def vn_tcbs(sym):
     url = ("https://apipubaws.tcbs.com.vn/stock-insight/v2/stock/bars-long-term?"
-           f"ticker={sym}&type=stock&resolution=D&to={int(time.time()) + 86400}&countBack=520")
+           f"ticker={sym}&type=stock&resolution=D&to={int(time.time()) + 86400}&countBack=1300")
     j = http_json(url)
     bars = []
     for x in j.get("data", []):
@@ -148,7 +149,7 @@ def vn_tcbs(sym):
 
 
 def crypto_binance(sym):
-    url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym}&interval=1d&limit=760"
+    url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym}&interval=1d&limit=1000"
     j = http_json(url)
     bars = []
     for k in j:
@@ -165,7 +166,7 @@ def crypto_okx(sym):
             inst = base[: -len(q)] + "-" + q
             break
     bars, after = [], ""
-    for _ in range(8):  # mỗi lần 100 nến
+    for _ in range(18):  # mỗi lần 100 nến
         url = f"https://www.okx.com/api/v5/market/history-candles?instId={inst}&bar=1Dutc&limit=100{after}"
         j = http_json(url)
         rows = j.get("data", [])
@@ -178,7 +179,7 @@ def crypto_okx(sym):
             bars.append({"d": d, "o": float(k[1]), "h": float(k[2]), "l": float(k[3]),
                          "c": float(k[4]), "v": float(k[5])})
         after = f"&after={rows[-1][0]}"
-        if len(bars) >= 700:
+        if len(bars) >= 1700:
             break
     return bars
 
@@ -351,6 +352,17 @@ def stats(trades):
     }
 
 
+def save_history(sym, bars):
+    """Lưu lịch sử giá ngày (dùng cho biểu đồ nến trong app và để nghiên cứu)."""
+    os.makedirs(HIST_DIR, exist_ok=True)
+    h = {"d": [b["d"] for b in bars]}
+    for k in ("o", "h", "l", "c"):
+        h[k] = [round(b[k], 4) for b in bars]
+    h["v"] = [round(b["v"]) for b in bars]
+    with open(os.path.join(HIST_DIR, f"{sym}.json"), "w", encoding="utf-8") as f:
+        json.dump(h, f, separators=(",", ":"))
+
+
 def r2(x, crypto):
     if x is None:
         return None
@@ -359,6 +371,7 @@ def r2(x, crypto):
 
 def analyse(sym, cfg):
     bars, src = fetch_bars(sym)
+    save_history(sym, bars)
     crypto = is_crypto(sym)
     ind, ev, trades, open_trade, st, stp, tgt = run_signals(bars, cfg)
     i = len(bars) - 1
