@@ -2,17 +2,18 @@ name: MD Signal Bot
 
 on:
   schedule:
-    - cron: "10 0 * * *"     # 07:10 giờ VN mỗi ngày: nến ngày của crypto vừa đóng
-    - cron: "20 8 * * 1-5"   # 15:20 giờ VN thứ 2–6: sau khi HOSE đóng cửa
+    - cron: "10 0 * * *"     # 07:10 giờ VN: quét tín hiệu (crypto vừa đóng nến ngày)
+    - cron: "20 8 * * 1-5"   # 15:20 giờ VN thứ 2–6: quét tín hiệu sau khi HOSE đóng cửa
+    - cron: "10 10 * * 1-5"  # 17:10 giờ VN thứ 2–6: đọc tin tức + BCTC bằng AI (giá DeepSeek thấp điểm)
   workflow_dispatch:
     inputs:
       mode:
-        description: "scan = quét bình thường · test = gửi bảng tổng hợp thử qua Telegram"
+        description: "scan = quét tín hiệu · test = gửi bảng thử qua Telegram · news = đọc tin tức + BCTC"
         type: choice
-        options: [scan, test]
+        options: [scan, test, news]
         default: scan
   push:
-    paths: ["app.html", "md_signal.py"]
+    paths: ["app.html", "*.py"]
 
 permissions:
   contents: write
@@ -22,20 +23,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
+  run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Quét chỉ báo và báo Telegram
+      - name: Cài thư viện AI
+        run: pip install --quiet scikit-learn numpy
+
+      - name: Chạy MD Signal
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          MODE: ${{ github.event.inputs.mode || 'scan' }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MODE: ${{ github.event.inputs.mode || (github.event.schedule == '10 10 * * 1-5' && 'news') || 'scan' }}
         run: python md_signal.py
 
       - name: Lưu kết quả cho app
