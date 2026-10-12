@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#0E1A14"/>
+<path d="M88 340 C150 340 170 250 230 250 S320 330 380 250 S424 170 440 160" fill="none" stroke="#2ED644" stroke-width="34" stroke-linecap="round"/>
+<path d="M88 380 C160 380 190 300 250 300 S340 350 424 290" fill="none" stroke="#F04B4B" stroke-width="22" stroke-linecap="round" opacity=".9"/>
+<text x="256" y="150" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="128" fill="#F3F1EA">MD</text>
+</svg>

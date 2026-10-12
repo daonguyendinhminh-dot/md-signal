@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MD Signal</title>
+<meta name="theme-color" content="#0E1A14">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0E1A14; --panel:#14241C; --panel2:#1A2E24; --line:#24392E;
+  --ink:#F3F1EA; --muted:#93A69A; --faint:#5F7568;
+  --up:#2ED644; --up-soft:rgba(46,214,68,.14); --dn:#F04B4B; --dn-soft:rgba(240,75,75,.14);
+  --gold:#E8B84A; --blue:#5B8CFF; --pink:#E05BE6;
+  --r:16px;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#F4F2EA; --panel:#FFFFFF; --panel2:#F0EEE5; --line:#E2DED1;
+    --ink:#14211A; --muted:#5E6E64; --faint:#98A59C;
+    --up:#14A42E; --up-soft:rgba(20,164,46,.12); --dn:#D93636; --dn-soft:rgba(217,54,54,.11);
+    --gold:#B7861B; --blue:#2F5FD6; --pink:#B53BBB;
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{font-family:"Be Vietnam Pro",system-ui,sans-serif;font-size:15px;line-height:1.45;
+  padding:env(safe-area-inset-top) 0 calc(24px + env(safe-area-inset-bottom));min-height:100vh}
+.num{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+.wrap{max-width:640px;margin:0 auto;padding:0 16px}
+
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 0 10px;border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:12px}
+.logo{width:38px;height:38px;border-radius:11px;flex:none}
+.brand{flex:1;min-width:0}
+.brand b{display:block;font-size:19px;letter-spacing:.04em}
+.brand small{color:var(--muted);font-size:12.5px}
+.ibtn{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--panel);border:1px solid var(--line)}
+.ibtn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ibtn.spin svg{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.chips{display:flex;gap:8px;margin-top:12px;overflow-x:auto;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;padding:7px 13px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13.5px;color:var(--muted);white-space:nowrap}
+.chip b{color:var(--ink);margin-left:4px}
+.chip.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip.on b{color:var(--bg)}
+
+.notice{margin:14px 0 0;padding:12px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.notice.warn{border-color:var(--gold);color:var(--ink)}
+.notice b{color:var(--ink)}
+
+h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:22px 0 10px;font-weight:600}
+.sig{display:grid;gap:10px}
+.sigc{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);text-align:left;width:100%}
+.sigc .tag{font-weight:700;font-size:12.5px;padding:5px 9px;border-radius:8px;flex:none}
+.t1{background:var(--up-soft);color:var(--up)} .t-1,.t-2{background:var(--dn-soft);color:var(--dn)} .t2{background:rgba(232,184,74,.15);color:var(--gold)}
+.sigc .who{flex:1;min-width:0}
+.sigc .who b{font-size:16px}
+.sigc .who small{display:block;color:var(--muted);font-size:12.5px}
+
+.list{display:grid;gap:8px}
+.row{display:grid;grid-template-columns:1fr 84px auto;align-items:center;gap:12px;padding:12px 14px;border-radius:var(--r);background:var(--panel);border:1px solid var(--line);width:100%;text-align:left}
+.row .s b{font-size:16px;letter-spacing:.01em}
+.row .s small{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px;margin-top:2px}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+.hold{color:var(--gold);font-weight:600}
+.row .p{text-align:right}
+.row .p .num{font-size:15px;display:block}
+.pct{font-size:12.5px}
+.up{color:var(--up)} .dn{color:var(--dn)}
+.spark{width:84px;height:34px;display:block}
+.err{opacity:.7}
+
+.empty{padding:40px 10px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--ink);font-size:17px;margin-bottom:6px}
+
+/* bottom sheet */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s;z-index:20}
+.sheet{position:fixed;left:0;right:0;bottom:0;max-height:92vh;overflow-y:auto;background:var(--bg);border-radius:22px 22px 0 0;
+  transform:translateY(102%);transition:transform .25s ease;z-index:21;padding:8px 0 calc(28px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.open .scrim{opacity:1;pointer-events:auto}
+.open .sheet{transform:none}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line);margin:4px auto 10px}
+.sh-head{display:flex;align-items:flex-start;gap:12px}
+.sh-head .t{flex:1}
+.sh-head .t b{font-size:26px;letter-spacing:.01em}
+.sh-head .t div{color:var(--muted);font-size:13px}
+.big{font-size:26px}
+.chart{width:100%;height:auto;display:block;margin:12px 0 6px;background:var(--panel);border-radius:var(--r);border:1px solid var(--line)}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.cell{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.cell small{display:block;color:var(--muted);font-size:12px}
+.cell .num{font-size:16px}
+.cell.wide{grid-column:span 2}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:8px 4px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--muted);font-weight:500;font-size:12px}
+td.r,th.r{text-align:right}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:13px;border-radius:13px;background:var(--panel);border:1px solid var(--line);font-weight:600;margin-top:10px;text-decoration:none;color:var(--ink)}
+.btn.pri{background:var(--up);border-color:var(--up);color:#06210D}
+.note{font-size:12.5px;color:var(--muted);margin-top:10px}
+
+/* settings */
+label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+textarea,input[type=text],input[type=password],input[type=number]{width:100%;font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 12px}
+textarea{min-height:96px;font-family:"JetBrains Mono",monospace;font-size:13.5px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tog{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);font-size:14px}
+.tog input{width:22px;height:22px;accent-color:var(--up);flex:none}
+.msg{margin-top:10px;font-size:13.5px;padding:10px 12px;border-radius:10px;display:none}
+.msg.show{display:block}
+.msg.ok{background:var(--up-soft);color:var(--up)} .msg.bad{background:var(--dn-soft);color:var(--dn)}
+details{margin-top:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;color:var(--muted)}
+summary{color:var(--ink);font-weight:600;cursor:pointer}
+footer{margin-top:28px;font-size:12px;color:var(--faint);text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top">
+      <img class="logo" src="icon.svg" alt="">
+      <div class="brand"><b>MD Signal</b><small id="upd">Đang tải…</small></div>
+      <button class="ibtn" id="installBtn" title="Cài app" style="display:none"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg></button>
+      <button class="ibtn" id="reload" title="Tải lại"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7"/></svg></button>
+      <button class="ibtn" id="setBtn" title="Cài đặt"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg></button>
+    </div>
+    <div class="chips" id="chips"></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="notices"></div>
+  <div id="sigWrap"></div>
+  <h2 id="listTitle">Danh sách theo dõi</h2>
+  <div class="list" id="list"></div>
+  <footer>Tín hiệu kỹ thuật dùng để tham khảo, không phải khuyến nghị đầu tư.<br>Dữ liệu cập nhật tự động sau mỗi phiên.</footer>
+</main>
+
+<div id="detail" class="layer"><div class="scrim" data-close></div><div class="sheet"><div class="grab"></div><div class="wrap" id="detailBody"></div></div></div>
+<div id="settings" class="layer"><div class="scrim" data-close></div><div class="sheet"><div class="grab"></div><div class="wrap" id="setBody"></div></div></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('mdsignal.'+k); return v === null ? d : v; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('mdsignal.'+k, v); }catch(e){} }
+};
+let DATA = null, FILTER = store.get('filter','all');
+const EV = {1:'MUA', '-1':'BÁN', '-2':'CHẠM STOP', 2:'ĐẠT MỤC TIÊU'};
+
+function fp(x, crypto){
+  if (x === null || x === undefined || isNaN(x)) return '—';
+  if (crypto) return x.toLocaleString('en-US', {minimumFractionDigits: x < 1 ? 4 : 2, maximumFractionDigits: x < 1 ? 4 : 2});
+  return Math.round(x).toLocaleString('en-US');
+}
+function pct(x, d=1){ if (x === null || x === undefined || isNaN(x)) return '—'; return (x>0?'+':'') + x.toFixed(d) + '%'; }
+function vd(d){ if(!d) return '—'; const [y,m,dd] = d.split('-'); return `${dd}/${m}/${y}`; }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function spark(r, w=84, h=34){
+  const c = (r.chart && r.chart.c || []).slice(-40).filter(v => v !== null);
+  if (c.length < 2) return '';
+  const mn = Math.min(...c), mx = Math.max(...c), k = (mx - mn) || 1;
+  const pts = c.map((v,i) => `${(i/(c.length-1)*(w-2)+1).toFixed(1)},${(h-2-(v-mn)/k*(h-4)).toFixed(1)}`).join(' ');
+  const col = r.trend_up ? 'var(--up)' : 'var(--dn)';
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+function bigChart(r){
+  const W = Math.max(280, Math.min(608, (window.innerWidth || 390) - 32)), H = 210, P = {l:8, r:62, t:12, b:22};
+  const ch = r.chart || {c:[]}; const n = ch.c.length;
+  if (n < 2) return '';
+  const vals = [...ch.c, ...ch.s, ...ch.l].filter(v => v !== null);
+  if (r.state === 1){ if (r.stop) vals.push(r.stop); if (r.target) vals.push(r.target); }
+  let mn = Math.min(...vals), mx = Math.max(...vals); const pad = (mx-mn)*0.06 || 1; mn -= pad; mx += pad;
+  const X = i => P.l + i/(n-1)*(W-P.l-P.r), Y = v => P.t + (1-(v-mn)/(mx-mn))*(H-P.t-P.b);
+  const line = (arr, col, sw) => { let d = '', pen = false; arr.forEach((v,i) => { if (v === null){ pen = false; return; } d += (pen?'L':'M') + X(i).toFixed(1) + ',' + Y(v).toFixed(1); pen = true; }); return `<path d="${d}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round"/>`; };
+  // nền xanh/hồng theo SMA ngắn vs dài
+  let bands = '', runStart = null, runUp = null;
+  const edge = i => i <= 0 ? X(0) : i >= n ? X(n-1) : (X(i-1)+X(i))/2;
+  const flush = end => { if (runStart === null) return; const x0 = edge(runStart), x1 = edge(end);
+    bands += `<rect x="${x0.toFixed(1)}" y="${P.t}" width="${(x1-x0).toFixed(1)}" height="${H-P.t-P.b}" fill="${runUp?'var(--up)':'var(--dn)'}" opacity=".08"/>`; };
+  for (let i = 0; i < n; i++){
+    const ok = ch.s[i] !== null && ch.l[i] !== null, up = ok && ch.s[i] > ch.l[i];
+    if (!ok){ flush(i); runStart = null; continue; }
+    if (runStart === null || up !== runUp){ flush(i); runStart = i; runUp = up; }
+  }
+  flush(n);
+  const hl = (v, col, txt) => v ? `<line x1="${P.l}" x2="${W-P.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="${col}" stroke-dasharray="5 4" stroke-width="1.2"/><text x="${W-P.r+4}" y="${(Y(v)+4).toFixed(1)}" fill="${col}" font-size="11" font-family="JetBrains Mono,monospace">${txt}</text>` : '';
+  let marks = '';
+  (r.events || []).forEach(e => { const i = ch.d.indexOf(e.d); if (i < 0) return; const col = e.type === 1 ? 'var(--up)' : e.type === 2 ? 'var(--gold)' : 'var(--dn)'; const y = Y(ch.c[i]); marks += `<circle cx="${X(i).toFixed(1)}" cy="${y.toFixed(1)}" r="5" fill="${col}" stroke="var(--panel)" stroke-width="2"/>`; });
+  const ticks = [mx - pad, (mx+mn)/2, mn + pad].map(v => `<text x="${W-P.r+4}" y="${(Y(v)+4).toFixed(1)}" fill="var(--faint)" font-size="10.5" font-family="JetBrains Mono,monospace">${fp(v, r.crypto)}</text>`).join('');
+  const dl = `<text x="${P.l}" y="${H-6}" fill="var(--faint)" font-size="10.5">${vd(ch.d[0])}</text><text x="${W-P.r}" y="${H-6}" fill="var(--faint)" font-size="10.5" text-anchor="end">${vd(ch.d[n-1])}</text>`;
+  const lv = r.state === 1 ? hl(r.target, 'var(--up)', 'MT') + hl(r.stop, 'var(--dn)', 'SL') : '';
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}">${bands}${ticks}${dl}${line(ch.l,'var(--pink)',1.6)}${line(ch.s,'var(--blue)',1.6)}${line(ch.c,'var(--ink)',2)}${lv}${marks}</svg>`;
+}
+
+function counts(rs){
+  const ok = rs.filter(r => !r.error);
+  return { all: rs.length, hold: ok.filter(r => r.state === 1).length, up: ok.filter(r => r.trend_up).length,
+           dn: ok.filter(r => !r.trend_up).length, crypto: rs.filter(r => r.crypto).length };
+}
+
+function render(){
+  const rs = DATA.results || [];
+  const c = counts(rs);
+  const u = DATA.updated ? new Date(DATA.updated) : null;
+  $('#upd').textContent = u ? 'Cập nhật ' + u.toLocaleString('vi-VN', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'}) : '';
+  const F = [['all','Tất cả',c.all],['hold','Đang giữ',c.hold],['up','Xanh',c.up],['dn','Hồng',c.dn],['crypto','Crypto',c.crypto]];
+  $('#chips').innerHTML = F.map(([k,t,n]) => `<button class="chip ${FILTER===k?'on':''}" data-f="${k}">${t}<b>${n}</b></button>`).join('');
+
+  // thông báo
+  let nt = '';
+  const bad = rs.filter(r => r.error);
+  if (DATA.telegram && DATA.telegram !== 'ok') nt += `<div class="notice warn">📨 Telegram: <b>${esc(DATA.telegram)}</b></div>`;
+  if (bad.length) nt += `<div class="notice warn">⚠️ Chưa lấy được dữ liệu: <b>${bad.map(r => esc(r.sym)).join(', ')}</b>. Kiểm tra lại mã trong Cài đặt.</div>`;
+  $('#notices').innerHTML = nt;
+
+  // tín hiệu phiên gần nhất
+  const sig = rs.filter(r => !r.error && r.event);
+  $('#sigWrap').innerHTML = sig.length ? `<h2>Tín hiệu phiên gần nhất</h2><div class="sig">` + sig.map(r =>
+    `<button class="sigc" data-s="${esc(r.sym)}"><span class="tag t${r.event}">${EV[r.event]}</span><span class="who"><b>${esc(r.sym)}</b><small>${vd(r.date)}${r.event===1?` · Stop ${fp(r.stop,r.crypto)} · MT ${fp(r.target,r.crypto)}`:''}</small></span><span class="num">${fp(r.close, r.crypto)}</span></button>`).join('') + `</div>` : '';
+
+  const list = rs.filter(r => FILTER === 'all' || (FILTER === 'crypto' ? r.crypto : !r.error && (FILTER === 'hold' ? r.state === 1 : FILTER === 'up' ? r.trend_up : !r.trend_up)));
+  $('#listTitle').textContent = F.find(f => f[0] === FILTER)[1] === 'Tất cả' ? 'Danh sách theo dõi' : F.find(f => f[0] === FILTER)[1];
+  $('#list').innerHTML = list.length ? list.map(r => r.error ?
+    `<button class="row err" data-s="${esc(r.sym)}"><span class="s"><b>${esc(r.sym)}</b><small>Lỗi dữ liệu</small></span><span></span><span class="p">—</span></button>` :
+    `<button class="row" data-s="${esc(r.sym)}">
+      <span class="s"><b>${esc(r.sym)}</b><small><span class="dot" style="background:${r.trend_up?'var(--up)':'var(--dn)'}"></span>${r.trend_up?'Xanh':'Hồng'}${r.state===1?' · <span class="hold">Đang giữ</span>':''}</small></span>
+      ${spark(r)}
+      <span class="p"><span class="num">${fp(r.close, r.crypto)}</span><span class="pct num ${r.chg>=0?'up':'dn'}">${pct(r.chg, 2)}</span></span>
+    </button>`).join('') : `<div class="empty">Không có mã nào trong mục này.</div>`;
+}
+
+function openLayer(id){ $('#'+id).classList.add('open'); document.body.style.overflow = 'hidden'; }
+function closeLayers(){ document.querySelectorAll('.layer').forEach(l => l.classList.remove('open')); document.body.style.overflow = ''; }
+
+function showDetail(sym){
+  const r = (DATA.results || []).find(x => x.sym === sym); if (!r) return;
+  const tv = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent((r.crypto ? 'BINANCE:' : 'HOSE:') + r.sym);
+  if (r.error){
+    $('#detailBody').innerHTML = `<div class="sh-head"><div class="t"><b>${esc(r.sym)}</b><div>Không lấy được dữ liệu</div></div></div><div class="notice">${esc(r.error)}</div><div class="note">Có thể mã viết sai, hoặc nguồn dữ liệu tạm thời lỗi. Lần quét sau sẽ thử lại.</div>`;
+    openLayer('detail'); return;
+  }
+  const st = r.stats || {n:0};
+  const statHtml = st.n ? `
+    <div class="grid">
+      <div class="cell"><small>Số lệnh</small><span class="num">${st.n}</span></div>
+      <div class="cell"><small>Tỷ lệ thắng</small><span class="num ${st.win_rate>=50?'up':'dn'}">${st.win_rate}%</span></div>
+      <div class="cell"><small>Lãi TB / lệnh</small><span class="num ${st.avg>=0?'up':'dn'}">${pct(st.avg,2)}</span></div>
+      <div class="cell"><small>Tổng (cộng dồn)</small><span class="num ${st.total>=0?'up':'dn'}">${pct(st.total)}</span></div>
+      <div class="cell"><small>Lệnh tốt nhất</small><span class="num up">${pct(st.best)}</span></div>
+      <div class="cell"><small>Lệnh tệ nhất</small><span class="num dn">${pct(st.worst)}</span></div>
+    </div>
+    <div class="note">Tính từ ${vd(st.since)}, giữ trung bình ${st.avg_days} phiên. Mua ở giá đóng cửa ngày có tín hiệu, bán khi có tín hiệu BÁN hoặc chạm stop. Chưa trừ phí, thuế.</div>` :
+    `<div class="note">Chưa có lệnh nào hoàn tất trong khoảng dữ liệu đang xét (khoảng 2 năm). Bộ lọc đang chặt; có thể nới trong Cài đặt.</div>`;
+  const trades = (r.recent_trades || []).length ? `<table><tr><th>Mua</th><th>Bán</th><th>Lý do</th><th class="r">Kết quả</th></tr>` +
+    r.recent_trades.map(t => `<tr><td>${vd(t.entry_d)}<br><span class="num">${fp(t.entry,r.crypto)}</span></td><td>${vd(t.exit_d)}<br><span class="num">${fp(t.exit,r.crypto)}</span></td><td>${esc(t.why)}</td><td class="r num ${t.ret>=0?'up':'dn'}">${pct(t.ret)}</td></tr>`).join('') + `</table>` : '';
+  const evs = (r.events || []).length ? `<table>` + r.events.map(e => `<tr><td>${vd(e.d)}</td><td><span class="tag t${e.type}" style="font-size:12px;font-weight:700;padding:3px 7px;border-radius:6px">${EV[e.type]}</span></td><td class="r num">${fp(e.price, r.crypto)}</td></tr>`).join('') + `</table>` : '<div class="note">Chưa có tín hiệu.</div>';
+  const pos = r.state === 1 ? `
+    <div class="grid">
+      <div class="cell wide"><small>Đang giữ từ ${vd(r.open && r.open.entry_d)} · giá mua <span class="num">${fp(r.open && r.open.entry, r.crypto)}</span></small><span class="num big ${r.open && r.open.pnl>=0?'up':'dn'}">${pct(r.open && r.open.pnl, 2)}</span></div>
+      <div class="cell"><small>Điểm Stop</small><span class="num dn">${fp(r.stop, r.crypto)}</span></div>
+      <div class="cell"><small>Mục tiêu</small><span class="num up">${fp(r.target, r.crypto)}</span></div>
+    </div>` : `<div class="notice">Đang <b>đứng ngoài</b>. Chờ tín hiệu MUA ${r.trend_up ? '(xu hướng ngắn hạn đang xanh)' : '(xu hướng ngắn hạn đang hồng)'}.</div>`;
+  $('#detailBody').innerHTML = `
+    <div class="sh-head">
+      <div class="t"><b>${esc(r.sym)}</b><div>Phiên ${vd(r.date)} · nguồn ${esc(r.source)}</div></div>
+      <div style="text-align:right"><div class="num big">${fp(r.close, r.crypto)}</div><div class="num pct ${r.chg>=0?'up':'dn'}">${pct(r.chg,2)}</div></div>
+    </div>
+    ${bigChart(r)}
+    <div class="legend"><span><i style="background:var(--ink)"></i>Giá</span><span><i style="background:var(--blue)"></i>SMA ${DATA.config.sma_short}</span><span><i style="background:var(--pink)"></i>SMA ${DATA.config.sma_long}</span>${r.state===1?'<span><i style="background:var(--dn)"></i>Stop</span><span><i style="background:var(--up)"></i>Mục tiêu</span>':''}</div>
+    <h2>Vị thế</h2>${pos}
+    <div class="grid">
+      <div class="cell"><small>SMA ${DATA.config.sma_short}</small><span class="num">${fp(r.sma_s, r.crypto)}</span></div>
+      <div class="cell"><small>SMA ${DATA.config.sma_long}</small><span class="num">${fp(r.sma_l, r.crypto)}</span></div>
+      <div class="cell"><small>Xu hướng</small><span class="${r.trend_up?'up':'dn'}" style="font-weight:600">${r.trend_up?'XANH – canh MUA':'HỒNG – canh BÁN'}</span></div>
+      <div class="cell"><small>ADX (sức mạnh xu hướng)</small><span class="num">${r.adx ?? '—'}</span></div>
+    </div>
+    <h2>Độ chính xác trong quá khứ</h2>${statHtml}
+    ${trades ? `<h2>Lệnh gần đây</h2>${trades}` : ''}
+    <h2>Tín hiệu gần đây</h2>${evs}
+    <a class="btn" href="${tv}" target="_blank" rel="noopener">Mở biểu đồ trên TradingView ↗</a>`;
+  openLayer('detail');
+}
+
+/* ───────── Cài đặt & GitHub ───────── */
+function repoGuess(){
+  const h = location.hostname, seg = location.pathname.split('/').filter(Boolean);
+  if (h.endsWith('.github.io')){ const owner = h.replace('.github.io',''); return owner + '/' + (seg[0] || h); }
+  return '';
+}
+function showSettings(){
+  const c = (DATA && DATA.config) || {};
+  const syms = (c.symbols || []).join(', ');
+  $('#setBody').innerHTML = `
+    <div class="sh-head"><div class="t"><b style="font-size:22px">Cài đặt</b><div>Lưu xong, bot sẽ quét lại ngay với cài đặt mới.</div></div></div>
+    <label>Mã theo dõi (cách nhau bằng dấu phẩy; crypto ghi dạng BTCUSDT)</label>
+    <textarea id="fSyms">${esc(syms)}</textarea>
+    <div class="two">
+      <div><label>SMA ngắn</label><input type="number" id="fS" value="${c.sma_short ?? 10}" min="1"></div>
+      <div><label>SMA dài</label><input type="number" id="fL" value="${c.sma_long ?? 15}" min="2"></div>
+    </div>
+    <h2>Bộ lọc tín hiệu MUA</h2>
+    <div class="tog"><span>Chỉ mua khi giá trên MA <input type="number" id="fTL" value="${c.trend_len ?? 50}" style="width:70px;display:inline-block;padding:6px 8px"></span><input type="checkbox" id="fT" ${c.use_trend!==false?'checked':''}></div>
+    <div class="tog"><span>Khối lượng ≥ TB 20 phiên × <input type="number" step="0.1" id="fVM" value="${c.vol_mult ?? 1}" style="width:70px;display:inline-block;padding:6px 8px"></span><input type="checkbox" id="fV" ${c.use_vol!==false?'checked':''}></div>
+    <div class="tog"><span>Bỏ khi đi ngang, ADX &gt; <input type="number" id="fAM" value="${c.adx_min ?? 20}" style="width:70px;display:inline-block;padding:6px 8px"></span><input type="checkbox" id="fA" ${c.use_adx!==false?'checked':''}></div>
+    <div class="two">
+      <div><label>Stop = ATR ×</label><input type="number" step="0.1" id="fAtr" value="${c.atr_mult ?? 1.5}"></div>
+      <div><label>Mục tiêu (lời/lỗ)</label><input type="number" step="0.5" id="fRR" value="${c.rr ?? 2}"></div>
+    </div>
+    <h2>Kết nối GitHub</h2>
+    <label>Kho (tài khoản/tên-kho)</label>
+    <input type="text" id="fRepo" value="${esc(store.get('repo', repoGuess()))}" autocapitalize="off" autocorrect="off" spellcheck="false">
+    <label>Mã truy cập GitHub (token) — chỉ lưu trên máy này</label>
+    <input type="password" id="fTok" value="${esc(store.get('token',''))}" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="github_pat_…">
+    <button class="btn pri" id="saveBtn">Lưu cài đặt &amp; quét lại</button>
+    <button class="btn" id="runBtn">Chỉ quét lại ngay</button>
+    <div class="msg" id="setMsg"></div>
+    <details><summary>Cách lấy token</summary>
+      GitHub → ảnh đại diện → <b>Settings</b> → <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Fine-grained tokens</b> → <b>Generate new token</b>.
+      Chọn <b>Only select repositories</b> → chọn kho này. Mục <b>Permissions</b>: <b>Contents</b> = Read and write, <b>Actions</b> = Read and write. Bấm tạo, sao chép và dán vào ô trên.
+    </details>
+    <div class="note">Không có token vẫn xem app bình thường; token chỉ cần để sửa danh sách mã và bấm quét từ app.</div>`;
+  openLayer('settings');
+  $('#saveBtn').onclick = () => saveSettings(true);
+  $('#runBtn').onclick = () => saveSettings(false);
+}
+function setMsg(t, ok){ const m = $('#setMsg'); m.textContent = t; m.className = 'msg show ' + (ok ? 'ok' : 'bad'); }
+const b64e = s => { const b = new TextEncoder().encode(s); let x = ''; b.forEach(c => x += String.fromCharCode(c)); return btoa(x); };
+const b64d = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g,'')), c => c.charCodeAt(0)));
+async function gh(path, opt = {}){
+  const tok = $('#fTok').value.trim(), repo = $('#fRepo').value.trim();
+  const r = await fetch(`https://api.github.com/repos/${repo}${path}`, {...opt, headers: {'Accept':'application/vnd.github+json','Authorization':'Bearer ' + tok, 'X-GitHub-Api-Version':'2022-11-28', ...(opt.headers||{})}});
+  if (!r.ok && r.status !== 204){ let t = ''; try{ t = (await r.json()).message; }catch(e){} throw new Error(`GitHub ${r.status}: ${t}`); }
+  return r.status === 204 ? null : r.json();
+}
+async function saveSettings(withConfig){
+  const tok = $('#fTok').value.trim(), repo = $('#fRepo').value.trim();
+  if (!tok || !repo.includes('/')){ setMsg('Cần điền tên kho và token GitHub.', false); return; }
+  store.set('token', tok); store.set('repo', repo);
+  try{
+    if (withConfig){
+      setMsg('Đang lưu…', true);
+      const syms = $('#fSyms').value.split(/[,\s;]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+      if (!syms.length){ setMsg('Danh sách mã đang trống.', false); return; }
+      let cur = {}, sha;
+      try{ const f = await gh('/contents/config.json'); sha = f.sha; cur = JSON.parse(b64d(f.content)); }catch(e){ if (!/404/.test(e.message)) throw e; }
+      const num = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; };
+      Object.assign(cur, { symbols: syms, sma_short: num('#fS',10)|0, sma_long: num('#fL',15)|0,
+        use_trend: $('#fT').checked, trend_len: num('#fTL',50)|0, use_vol: $('#fV').checked, vol_mult: num('#fVM',1),
+        use_adx: $('#fA').checked, adx_min: num('#fAM',20), atr_mult: num('#fAtr',1.5), rr: num('#fRR',2) });
+      await gh('/contents/config.json', {method:'PUT', body: JSON.stringify({message:'MD Signal: cập nhật cài đặt từ app', content: b64e(JSON.stringify(cur, null, 2) + '\n'), ...(sha ? {sha} : {})})});
+    }
+    setMsg('Đang yêu cầu bot quét…', true);
+    const repoInfo = await gh('');
+    await gh('/actions/workflows/md-signal.yml/dispatches', {method:'POST', body: JSON.stringify({ref: repoInfo.default_branch || 'main', inputs: {mode: 'scan'}})});
+    setMsg((withConfig ? 'Đã lưu. ' : '') + 'Bot đang quét, khoảng 1–3 phút nữa bấm nút tải lại ↻ để xem kết quả mới.', true);
+  }catch(e){ setMsg('Lỗi: ' + e.message, false); }
+}
+
+/* ───────── Tải dữ liệu ───────── */
+async function load(){
+  $('#reload').classList.add('spin');
+  try{
+    const r = await fetch('data.json?t=' + Date.now(), {cache:'no-store'});
+    if (!r.ok) throw new Error(r.status);
+    DATA = await r.json();
+    render();
+  }catch(e){
+    if (!DATA){
+      $('#upd').textContent = 'Chưa có dữ liệu';
+      $('#list').innerHTML = `<div class="empty"><b>Chưa có dữ liệu</b>Vào GitHub → tab <b>Actions</b> → <b>MD Signal Bot</b> → <b>Run workflow</b> để bot quét lần đầu, rồi quay lại đây bấm ↻.</div>`;
+    }
+  }
+  $('#reload').classList.remove('spin');
+}
+
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-f]'); if (f){ FILTER = f.dataset.f; store.set('filter', FILTER); render(); return; }
+  const s = e.target.closest('[data-s]'); if (s){ showDetail(s.dataset.s); return; }
+  if (e.target.closest('[data-close]')) closeLayers();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLayers(); });
+window.addEventListener('popstate', closeLayers);
+$('#reload').onclick = load;
+$('#setBtn').onclick = showSettings;
+
+let deferred = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferred = e; $('#installBtn').style.display = 'grid'; });
+$('#installBtn').onclick = async () => { if (!deferred) return; deferred.prompt(); await deferred.userChoice; deferred = null; $('#installBtn').style.display = 'none'; };
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') load(); });
+load();
+</script>
+</body>
+</html>
