@@ -146,12 +146,15 @@ def apply_ai(results, bars_by_sym, path, log=print):
 
     latest = max(r["date"] for r in vn.values())
     new = 0
-    for s, r in vn.items():
-        I = P[s]
+    for s, r0 in vn.items():
+      I = P[s]
+      for r in (r0, r0.get("swing")):
+        if not r:
+            continue
         items = list(r.get("trades", []))
         if r.get("pos"):
             items.append(r["pos"])
-        pend = {"sig_d": r["date"]} if r["status"] == "buy" else None
+        pend = {"sig_d": r0["date"]} if r["status"] == "buy" else None
         if pend:
             items.append(pend)
         for t in items:

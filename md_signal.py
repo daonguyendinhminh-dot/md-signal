@@ -44,6 +44,9 @@ DEFAULT_CONFIG = {
     "ma_len": 200,        # chỉ mua khi giá trên MA này (xu hướng lớn tăng)
     "stop_atr": 3.0,      # cắt lỗ = giá − ATR × hệ số
     "be_atr": 2.0,        # lời được ATR × hệ số thì dời stop về giá mua
+    "sw_ma": 20,          # Lướt sóng: MUA khi giá cắt lên MA này, BÁN khi đóng cửa dưới
+    "sw_vol": 1.5,        # Lướt sóng: khối lượng phải lớn hơn TB20 × hệ số
+    "sw_stop_atr": 3.0,   # Lướt sóng: cắt lỗ = giá − ATR × hệ số
     "usd_vnd": 26000,     # tỷ giá quy đổi crypto (USD) sang VND cho tài khoản ảo
     "paper": None,        # tài khoản giao dịch ảo (app tự ghi)
     "telegram_chat_id": None,
@@ -318,6 +321,53 @@ def run_strategy(bars, cfg, crypto):
     return events, trades, state
 
 
+def run_swing(bars, cfg, crypto):
+    """Lướt sóng: MUA khi giá đóng cửa cắt lên MA20, khối lượng > 1,5 lần TB20 và giá trên MA200.
+    BÁN khi giá đóng cửa dưới MA20. Cắt lỗ = giá − 3 ATR. Khớp mở cửa phiên sau, T+3."""
+    o = [b["o"] for b in bars]; h = [b["h"] for b in bars]
+    l = [b["l"] for b in bars]; c = [b["c"] for b in bars]; v = [b["v"] for b in bars]
+    n = len(bars)
+    tr = [h[0] - l[0]] + [max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])) for i in range(1, n)]
+    atr = rma(tr, 14)
+    m20 = sma(c, cfg["sw_ma"])
+    vma = sma(v, 20)
+    ma = sma(c, cfg["ma_len"])
+    fee_b = 0.001 if crypto else 0.0015
+    fee_s = 0.001 if crypto else 0.0025
+    tmin = 0 if crypto else 3
+    events = [0] * n
+    trades, pos, pending = [], None, None
+    first = max(cfg["ma_len"], cfg["sw_ma"], 21)
+    for i in range(first, n):
+        if pending == "buy" and pos is None:
+            pos = {"i": i, "sig_d": bars[i - 1]["d"], "raw": o[i], "cost": o[i] * (1 + fee_b),
+                   "stop": c[i - 1] - cfg["sw_stop_atr"] * atr[i - 1], "be": False}
+        elif pending == "sell" and pos is not None:
+            trades.append(_close(pos, o[i], fee_s, i, bars, "Bán"))
+            pos = None
+        pending = None
+        if pos is not None:
+            held = i - pos["i"]
+            if held >= tmin and l[i] <= pos["stop"]:
+                trades.append(_close(pos, min(o[i], pos["stop"]), fee_s, i, bars, "Cắt lỗ"))
+                pos = None
+                events[i] = EV_STOP
+                continue
+            if held + 1 >= tmin and c[i] < m20[i]:
+                pending = "sell"
+                events[i] = EV_SELL
+        elif (m20[i - 1] is not None and ma[i] is not None and vma[i] and atr[i]
+              and c[i] > m20[i] and c[i - 1] <= m20[i - 1] and v[i] > cfg["sw_vol"] * vma[i] and c[i] > ma[i]):
+            pending = "buy"
+            events[i] = EV_BUY
+    last = n - 1
+    state = {"pending": pending, "pos": pos, "atr": atr[last], "ma": ma[last],
+             "buy_level": m20[last], "sell_level": m20[last],
+             "vol_need": cfg["sw_vol"] * vma[last] if vma[last] else None,
+             "pending_stop": (c[last] - cfg["sw_stop_atr"] * atr[last]) if pending == "buy" else None}
+    return events, trades, state
+
+
 def _close(pos, px, fee_s, i, bars, why):
     return {"sig_d": pos["sig_d"], "in_d": bars[pos["i"]]["d"], "in": pos["raw"],
             "out_d": bars[i]["d"], "out": px, "why": why, "days": i - pos["i"],
@@ -365,12 +415,7 @@ def r2(x, crypto):
     return round(x, 4 if crypto and x < 1 else 2)
 
 
-def analyse(sym, cfg):
-    bars, src = fetch_bars(sym)
-    save_history(sym, bars)
-    BARS[sym] = bars
-    crypto = is_crypto(sym)
-    events, trades, stt = run_strategy(bars, cfg, crypto)
+def strat_block(bars, events, trades, stt, crypto):
     i = len(bars) - 1
     close = bars[i]["c"]
     pos = stt["pos"]
@@ -384,13 +429,8 @@ def analyse(sym, cfg):
         status = "stopped"
     else:
         status = "wait"
-    res = {
-        "sym": sym, "crypto": crypto, "source": src,
-        "date": bars[i]["d"], "close": r2(close, crypto),
-        "chg": round((close / bars[i - 1]["c"] - 1) * 100, 2),
+    blk = {
         "status": status, "event": events[i],
-        "uptrend": bool(stt["ma"] and close > stt["ma"]),
-        "ma": r2(stt["ma"], crypto),
         "buy_level": r2(stt["buy_level"], crypto),
         "sell_level": r2(stt["sell_level"], crypto),
         "to_buy": round((stt["buy_level"] / close - 1) * 100, 1) if stt["buy_level"] else None,
@@ -401,9 +441,31 @@ def analyse(sym, cfg):
         "trades": [{k: (r2(t[k], crypto) if k in ("in", "out") else round(t[k], 2) if k == "ret" else t[k])
                     for k in ("sig_d", "in_d", "in", "out_d", "out", "ret", "why", "days")} for t in trades],
     }
+    if stt.get("vol_need") is not None:
+        blk["vol_need"] = round(stt["vol_need"])
     if pos is not None:
-        res["pos"] = {"sig_d": pos["sig_d"], "in_d": bars[pos["i"]]["d"], "in": r2(pos["raw"], crypto),
+        blk["pos"] = {"sig_d": pos["sig_d"], "in_d": bars[pos["i"]]["d"], "in": r2(pos["raw"], crypto),
                       "pnl": round((close / pos["raw"] - 1) * 100, 1), "days": i - pos["i"] + 1}
+    return blk
+
+
+def analyse(sym, cfg):
+    bars, src = fetch_bars(sym)
+    save_history(sym, bars)
+    BARS[sym] = bars
+    crypto = is_crypto(sym)
+    events, trades, stt = run_strategy(bars, cfg, crypto)
+    i = len(bars) - 1
+    close = bars[i]["c"]
+    res = {
+        "sym": sym, "crypto": crypto, "source": src,
+        "date": bars[i]["d"], "close": r2(close, crypto),
+        "chg": round((close / bars[i - 1]["c"] - 1) * 100, 2),
+        "uptrend": bool(stt["ma"] and close > stt["ma"]),
+        "ma": r2(stt["ma"], crypto),
+    }
+    res.update(strat_block(bars, events, trades, stt, crypto))           # Phá đỉnh (mặc định)
+    res["swing"] = strat_block(bars, *run_swing(bars, cfg, crypto), crypto)  # Lướt sóng
     return res
 
 
@@ -458,25 +520,40 @@ def vn_date(d):
 def event_line(r, e):
     cr = r["crypto"]
     sym, px = r["sym"], fmt_px(r["close"], cr)
+    if r.get("kind") == "sw":
+        if e == EV_BUY:
+            return (f"🌊 <b>LƯỚT SÓNG · MUA {sym}</b> · giá {px}\n"
+                    f"      Giá cắt lên MA{r_cfg('sw_ma')} ({fmt_px(r['buy_level'], cr)}) kèm khối lượng lớn. 👉 Mua đầu phiên tới\n"
+                    f"      Bán khi đóng cửa dưới MA{r_cfg('sw_ma')} · cắt lỗ nếu chạm {fmt_px(r['stop'], cr)}") + extra_lines(r)
+        if e == EV_SELL:
+            line = f"🌊 <b>LƯỚT SÓNG · BÁN {sym}</b> · giá {px}\n      Đóng cửa dưới MA{r_cfg('sw_ma')}. 👉 Bán đầu phiên tới"
+            if r.get("pos"):
+                line += f"\n      Mua {vn_date(r['pos']['in_d'])} giá {fmt_px(r['pos']['in'], cr)} → đang {r['pos']['pnl']:+.1f}%"
+            return line
+        if e == EV_STOP and r["trades"]:
+            t = r["trades"][-1]
+            return (f"🌊 <b>LƯỚT SÓNG · CẮT LỖ {sym}</b>\n      Mua {vn_date(t['in_d'])} giá {fmt_px(t['in'], cr)} → "
+                    f"bán {fmt_px(t['out'], cr)} ({t['ret']:+.1f}%). 👉 Bán ngay nếu chưa bán")
+        return ""
     if e == EV_BUY:
-        line = (f"🟢 <b>MUA {sym}</b> · giá {px}\n"
+        line = (f"🟢 <b>PHÁ ĐỈNH · MUA {sym}</b> · giá {px}\n"
                 f"      Vượt đỉnh {r_cfg('breakout_len')} phiên. 👉 Mua đầu phiên tới\n"
                 f"      Cắt lỗ nếu giá chạm {fmt_px(r['stop'], cr)}")
         return line + extra_lines(r)
     if e == EV_SELL:
-        line = f"🔴 <b>BÁN {sym}</b> · giá {px}\n      Thủng đáy {r_cfg('exit_len')} phiên. 👉 Bán đầu phiên tới"
+        line = f"🔴 <b>PHÁ ĐỈNH · BÁN {sym}</b> · giá {px}\n      Thủng đáy {r_cfg('exit_len')} phiên. 👉 Bán đầu phiên tới"
         if r.get("pos"):
             line += f"\n      Mua {vn_date(r['pos']['in_d'])} giá {fmt_px(r['pos']['in'], cr)} → đang {r['pos']['pnl']:+.1f}%"
         return line
     if e == EV_STOP:
-        line = f"⛔ <b>CẮT LỖ {sym}</b> · giá chạm điểm dừng"
+        line = f"⛔ <b>PHÁ ĐỈNH · CẮT LỖ {sym}</b> · giá chạm điểm dừng"
         if r["trades"]:
             t = r["trades"][-1]
             line += (f"\n      Mua {vn_date(t['in_d'])} giá {fmt_px(t['in'], cr)} → bán {fmt_px(t['out'], cr)}"
                      f" ({t['ret']:+.1f}%). 👉 Bán ngay nếu chưa bán")
         return line
     if e == EV_BE:
-        return (f"🛡 <b>DỜI STOP {sym}</b> · giá {px}\n"
+        return (f"🛡 <b>PHÁ ĐỈNH · DỜI STOP {sym}</b> · giá {px}\n"
                 f"      Đã lời đủ: dời điểm cắt lỗ lên giá mua {fmt_px(r['stop'], cr)} → lệnh này không còn lỗ")
     return ""
 
@@ -530,6 +607,10 @@ def summary_text(results):
             tail = f"chờ mua, còn {r['to_buy']:.1f}% tới điểm mua"
         icon = "⚪" if st == "wait" and not r["uptrend"] else STATUS_LINE.get(st, "⏳")
         lines.append(f"{icon} <b>{r['sym']}</b> {fmt_px(r['close'], cr)} · {tail}")
+    sw = [r for r in results if "error" not in r and r["swing"]["status"] in ("hold", "sell", "buy")]
+    if sw:
+        lines.append("\n🌊 <b>Lướt sóng</b>: " + ", ".join(
+            f"{r['sym']} " + (f"{r['swing']['pos']['pnl']:+.1f}%" if r["swing"]["pos"] else "MUA phiên tới") for r in sw))
     return "\n".join(lines)
 
 
@@ -557,7 +638,7 @@ MANIFEST = {
     ],
 }
 
-SERVICE_WORKER = """const CACHE = 'mdsignal-v3';
+SERVICE_WORKER = """const CACHE = 'mdsignal-v4';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon.svg'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
@@ -729,15 +810,19 @@ def main():
         ai_status = f"lỗi: {str(e)[:150]}"
         log("AI lỗi:", e)
 
-    # Sự kiện mới (nến cuối) chưa báo
+    # Sự kiện mới (nến cuối) chưa báo — mỗi chiến lược riêng
     new_events = []
     for r in results:
-        if "error" in r or not r["event"]:
+        if "error" in r:
             continue
-        key = f"{r['date']}|{r['event']}"
-        if alerted.get(r["sym"]) != key:
-            new_events.append(r)
-            alerted[r["sym"]] = key
+        for kind, v in (("bo", r), ("sw", {**r, **r["swing"], "kind": "sw"})):
+            if not v["event"]:
+                continue
+            key = f"{r['date']}|{v['event']}"
+            akey = r["sym"] if kind == "bo" else r["sym"] + "|sw"
+            if alerted.get(akey) != key:
+                new_events.append(v)
+                alerted[akey] = key
 
     ok = [r for r in results if "error" not in r]
     bad = [r for r in results if "error" in r]
@@ -766,7 +851,7 @@ def main():
                     tg_send(token, chat_id, text + link_line)
                 elif new_events:
                     order = {EV_BUY: 0, EV_STOP: 1, EV_SELL: 2, EV_BE: 3}
-                    new_events.sort(key=lambda r: (order[r["event"]], r["sym"]))
+                    new_events.sort(key=lambda r: (r.get("kind") == "sw", order[r["event"]], r["sym"]))
                     days = sorted({r["date"] for r in new_events})
                     head = "📢 <b>MD Signal – tín hiệu phiên " + ", ".join(vn_date(d) for d in days) + "</b>"
                     body = "\n\n".join(event_line(r, r["event"]) for r in new_events)
@@ -784,7 +869,7 @@ def main():
         except Exception as e:
             tg_status = f"lỗi: {str(e)[:200]}"
             log("Telegram lỗi:", e)
-    log("Telegram:", tg_status, "| sự kiện mới:", [f"{r['sym']}:{r['event']}" for r in new_events])
+    log("Telegram:", tg_status, "| sự kiện mới:", [f"{r['sym']}:{r.get('kind', 'bo')}:{r['event']}" for r in new_events])
 
     public_cfg = {k: v for k, v in cfg.items() if k != "telegram_chat_id"}
     save_json(DATA_PATH, {
